@@ -634,11 +634,20 @@ def slide_multi_agent(sl):
                "Terminal B", font_size=Pt(11),
                color=GRAY, bold=True)
 
-    # Arrows between
-    mid_y1 = TOP + BOX_H * 2 // 5
-    mid_y2 = TOP + BOX_H * 3 // 5
-    draw_arrow_right(sl, LEFT + BOX_W, mid_y1, RX)
-    draw_arrow_left(sl, RX, mid_y2, LEFT + BOX_W)
+    # Bidirectional arrow at exact edge midpoint
+    center_y = TOP + BOX_H // 2
+    conn = sl.shapes.add_connector(
+        1, E(LEFT + BOX_W), E(center_y),
+        E(RX), E(center_y))
+    conn.line.color.rgb = ACCENT
+    conn.line.width = Pt(2)
+    ln = conn.line._ln
+    for tag in ('a:headEnd', 'a:tailEnd'):
+        end = ln.makeelement(qn(tag), {})
+        end.set('type', 'triangle')
+        end.set('w', 'med')
+        end.set('len', 'med')
+        ln.append(end)
 
     # Human orchestrates
     H_TOP = TOP + BOX_H + 200000
@@ -650,11 +659,16 @@ def slide_multi_agent(sl):
               "Different vendor models · Cross-verify"],
              fill=WHITE, border=ACCENT,
              font_size=Pt(12))
-    # Lines from terminals to human box
-    draw_line(sl, LEFT + BOX_W // 2, TOP + BOX_H,
-              hx + HW // 4, H_TOP)
-    draw_line(sl, RX + BOX_W // 2, TOP + BOX_H,
-              hx + HW * 3 // 4, H_TOP)
+    # Lines from terminals to human box (inverted-Y at center)
+    human_cx = hx + HW // 2
+    join_y = (TOP + BOX_H + H_TOP) // 2
+    cl_cx = LEFT + BOX_W // 2
+    cx_cx = RX + BOX_W // 2
+    draw_line(sl, cl_cx, TOP + BOX_H, cl_cx, join_y)
+    draw_line(sl, cl_cx, join_y, human_cx, join_y)
+    draw_line(sl, cx_cx, TOP + BOX_H, cx_cx, join_y)
+    draw_line(sl, cx_cx, join_y, human_cx, join_y)
+    draw_line(sl, human_cx, join_y, human_cx, H_TOP)
 
 
 def slide_perf_story(sl):
