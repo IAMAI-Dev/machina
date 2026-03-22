@@ -1383,7 +1383,7 @@ def build():
             "github.com/patchfx/tcg-rs",
             size=Pt(16), color=GRAY)
 
-    prs.save("os2atc-2026.pptx")
+    prs.save("os2atc-2026-ascii.pptx")
     print(f"Done! {len(prs.slides)} slides saved.")
 
 
