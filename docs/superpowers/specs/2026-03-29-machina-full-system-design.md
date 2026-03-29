@@ -911,8 +911,9 @@ available from Phase 1.
 
 ## 13. CLI Interface
 
-QEMU-style command line. Machine name encodes architecture:
-`<arch>-<board>` (e.g., `riscv64-ref`, `loongarch64-ref`).
+QEMU-style command line. `-machine` (shorthand `-M`) selects the
+target. Machine name encodes architecture: `<arch>-<board>` (e.g.,
+`riscv64-ref`, `loongarch64-ref`).
 
 ```bash
 # RISC-V full-system emulation
@@ -949,11 +950,11 @@ machina-loongarch64 -m 256M -kernel kernel.bin -nographic
 ```
 
 **Machine name resolution**:
-- `machina -machine riscv64-ref` → RISC-V ref machine
-- `machina -machine loongarch64-ref` → LoongArch ref machine
-- `machina -machine hetero-rv64-la64` → heterogeneous (future)
-- `machina-riscv64` alias → implies `-machine riscv64-ref`
-- `machina -machine ?` → list all available machines
+- `machina -M riscv64-ref` → RISC-V ref machine
+- `machina -M loongarch64-ref` → LoongArch ref machine
+- `machina -M hetero-rv64-la64` → heterogeneous (future)
+- `machina-riscv64` alias → implies `-M riscv64-ref`
+- `machina -M ?` → list all available machines
 
 ---
 
