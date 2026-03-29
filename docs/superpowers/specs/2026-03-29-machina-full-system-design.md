@@ -10,11 +10,11 @@
 ## 1. Executive Summary
 
 Machina is a Rust-native full-system emulator built on tcg-rs's proven JIT
-translation engine. It extends the existing linux-user emulation with
-privilege levels, MMU, interrupt/exception handling, device models, and a
-machine definition layer. The project supports heterogeneous multi-arch
-guests (RISC-V + LoongArch) in a single emulation instance, with RISC-V
-as the priority target.
+translation engine. It provides privilege levels, MMU, interrupt/exception
+handling, device models, and a machine definition layer. The project
+supports heterogeneous multi-arch guests (RISC-V + LoongArch) in a single
+emulation instance, with RISC-V as the priority target. Machina focuses
+exclusively on full-system emulation; linux-user mode is not supported.
 
 **Primary goal**: Boot rCore-Tutorial v3 on a RISC-V ref machine.
 **Secondary goal**: Boot full rCore, then extend to LoongArch guests.
@@ -29,8 +29,11 @@ as the priority target.
 | Crate prefix | `machina-*` |
 | Generic board | **ref** (reference machine) |
 | Monitor protocol | **MMP** (Machina Monitor Protocol) |
-| Binary (unified) | `machina` with `-machine` flag |
-| Binary aliases | `machina-riscv64`, `machina-loongarch64` |
+| Test framework | **mtest** (Machina Test) |
+| Binary | `machina` (unified, `-machine` selects arch+board) |
+| Binary aliases | `machina-riscv64` = `machina -machine riscv64-ref` |
+| | `machina-loongarch64` = `machina -machine loongarch64-ref` |
+| Machine naming | `<arch>-<board>`: `riscv64-ref`, `loongarch64-ref` |
 
 ---
 
@@ -48,34 +51,34 @@ Guest Binary → Frontend (decode) → IR → Optimizer → Backend (codegen) �
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    softmmu (binary)                  │
+│             src/main.rs (machina binary)             │
 │  CLI parsing → Machine build → Boot → Execution     │
 ├──────────┬──────────┬───────────┬───────────────────┤
 │ system/  │ monitor/ │ hw/riscv/ │ hw/loongarch/     │
 │ cpus     │ MMP/HMP  │ ref mach  │ ref mach (future) │
 │ mainloop │ gdbstub  │ boot+SBI  │                   │
 ├──────────┴──────────┴───────────┴───────────────────┤
-│                  hw/core                             │
+│                  hw/core                            │
 │  qdev · bus · irq · clock · chardev · loader · fdt  │
 ├──────────────────────┬──────────────────────────────┤
 │      hw/intc         │         hw/char              │
 │  PLIC · ACLINT       │       ns16550a               │
 ├──────────────────────┴──────────────────────────────┤
-│                    memory/                           │
+│                    memory/                          │
 │  AddressSpace · MemoryRegion tree · FlatView · RAM  │
 ├─────────────────────────────────────────────────────┤
-│                     accel/                           │
+│                     accel/                          │
 │  IR · optimize · liveness · regalloc · codegen      │
-│  host/x86_64 · exec/ (cpu_exec, TB, TLB) · timer   │
+│  host/x86_64 · exec/ (cpu_exec, TB, TLB) · timer    │
 ├──────────────┬──────────────────────────────────────┤
-│ guest/riscv  │           guest/loongarch             │
+│ guest/riscv  │           guest/loongarch            │
 │ CPU+CSR+MMU  │           CPU+CSR+MMU (future)       │
-│ +translate   │           +translate                  │
+│ +translate   │           +translate                 │
 ├──────────────┴──────────────────────────────────────┤
-│              core/ (traits + types)                  │
+│              core/ (traits + types)                 │
 │         GuestCpu · Machine · GPA/GVA/HVA            │
 ├─────────────────────────────────────────────────────┤
-│                    util/                             │
+│                    util/                            │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -215,21 +218,16 @@ machina/
 │   │                            #     phase 2: custom epoll-based loop)
 │   └── device_tree.rs           #   System-level FDT integration
 │
-│  ══════ Emulation Entries (binaries) ══════
+│  ══════ Binary Entry ══════
 │
-├── softmmu/                     # machina-softmmu (binary)
+├── src/                         # machina binary (workspace root crate)
 │   └── main.rs                  #   CLI → machine build → boot → run
-│
-├── linux-user/                  # machina-linux-user (binary)
-│   ├── main.rs
-│   ├── elfload.rs
-│   ├── syscall.rs
-│   └── mmap.rs
+│                                #   Aliases: machina-riscv64, machina-loongarch64
 │
 │  ══════ Testing ══════
 │
 ├── tests/
-│   ├── qtest/                   # machina-qtest (library)
+│   ├── mtest/                   # machina-mtest (library)
 │   │   ├── lib.rs
 │   │   ├── protocol.rs          #   Text protocol (QEMU qtest-compatible)
 │   │   ├── client.rs            #   Spawn machina subprocess + communicate
@@ -271,12 +269,10 @@ core ← util
   ├── monitor (core, memory, hw/core, accel)
   ├── system (core, memory, hw/core, accel, monitor)
   │
-  ├── softmmu (system, hw/*, accel, guest/*, monitor)  ← binary
-  └── linux-user (core, accel, guest/*)                 ← binary
+  └── src/main.rs (system, hw/*, accel, guest/*, monitor)  ← binary
 ```
 
-No circular dependencies. `linux-user` does not depend on `hw/` or
-`monitor/`.
+No circular dependencies.
 
 ### 4.3 QEMU Mapping
 
@@ -293,8 +289,8 @@ No circular dependencies. `linux-user` does not depend on `hw/` or
 | `monitor/hmp/` | `monitor/hmp*.c` | Human monitor (wraps MMP) |
 | `monitor/gdbstub/` | `gdbstub/` | GDB remote stub |
 | `system/` | `system/` | CPU mgmt + main loop |
-| `softmmu/` | `system/main.c` | Full-system binary |
-| `tests/qtest/` | `tests/qtest/` | Test framework |
+| `src/main.rs` | `system/main.c` | Binary entry point |
+| `tests/mtest/` | `tests/qtest/` | Test framework (mtest) |
 
 ---
 
@@ -851,9 +847,9 @@ Reference: QEMU `gdbstub/`, GDB Remote Serial Protocol.
 | Unit | Single component | In-process Rust API | `tests/cases/unit/` |
 | Integration | Subsystem | In-process Rust API | `tests/cases/integration/` |
 | Difftest | Correctness | Compare vs QEMU + Spike | `tests/cases/difftest/` |
-| System | End-to-end | qtest (out-of-process) | `tests/cases/system/` |
+| System | End-to-end | mtest (out-of-process) | `tests/cases/system/` |
 
-### 12.2 qtest Framework
+### 12.2 mtest Framework
 
 Reference: QEMU `tests/qtest/libqtest.h`.
 
@@ -881,11 +877,11 @@ set_irq_in QOM_PATH NAME NUM LEVEL → OK
 **Rust client API** (matches QEMU programming experience):
 
 ```rust
-use machina_qtest::prelude::*;
+use machina_mtest::prelude::*;
 
 #[test]
 fn test_uart_tx() {
-    let m = MachinaTest::start("-machine ref -m 128M");
+    let m = MachinaTest::start("-machine riscv64-ref -m 128M");
     // Write to UART THR
     m.writel(0x1000_0000, 0x41);
     // Check LSR TX empty
@@ -915,12 +911,13 @@ available from Phase 1.
 
 ## 13. CLI Interface
 
-QEMU-style command line:
+QEMU-style command line. Machine name encodes architecture:
+`<arch>-<board>` (e.g., `riscv64-ref`, `loongarch64-ref`).
 
 ```bash
-# Full-system emulation
+# RISC-V full-system emulation
 machina \
-    -machine ref \
+    -machine riscv64-ref \
     -m 128M \
     -smp 1 \
     -bios third-party/rustsbi/target/riscv64/release/rustsbi.bin \
@@ -928,22 +925,35 @@ machina \
     -nographic \
     -serial stdio
 
+# LoongArch (future)
+machina -machine loongarch64-ref -m 256M -kernel kernel.bin -nographic
+
 # With GDB
-machina -machine ref -m 128M -kernel rcore.bin -s -S
+machina -machine riscv64-ref -m 128M -kernel rcore.bin -s -S
 
 # With monitor
-machina -machine ref -m 128M -kernel rcore.bin \
+machina -machine riscv64-ref -m 128M -kernel rcore.bin \
     -monitor stdio \
     -serial tcp::4555,server=on
 
 # With MMP
-machina -machine ref -m 128M -kernel rcore.bin \
+machina -machine riscv64-ref -m 128M -kernel rcore.bin \
     -mmp tcp::5555,server=on
 
-# Aliases
-machina-riscv64 -machine ref -m 128M -kernel rcore.bin -nographic
-machina-loongarch64 -machine ref -m 128M -kernel kernel.bin -nographic
+# Aliases (default machine for each arch)
+machina-riscv64 -m 128M -kernel rcore.bin -nographic
+# equivalent to: machina -machine riscv64-ref -m 128M -kernel ...
+
+machina-loongarch64 -m 256M -kernel kernel.bin -nographic
+# equivalent to: machina -machine loongarch64-ref -m 256M -kernel ...
 ```
+
+**Machine name resolution**:
+- `machina -machine riscv64-ref` → RISC-V ref machine
+- `machina -machine loongarch64-ref` → LoongArch ref machine
+- `machina -machine hetero-rv64-la64` → heterogeneous (future)
+- `machina-riscv64` alias → implies `-machine riscv64-ref`
+- `machina -machine ?` → list all available machines
 
 ---
 
@@ -976,8 +986,8 @@ All crates renamed from `tcg-*` to `machina-*`:
 | `tcg-backend` | merged into `machina-accel` |
 | `tcg-frontend` | `machina-guest-riscv` |
 | `tcg-exec` | merged into `machina-accel` (exec/) |
-| `tcg-linux-user` | `machina-linux-user` |
-| `tcg-tests` | `machina-tests` |
+| `tcg-linux-user` | removed (linux-user mode dropped) |
+| `tcg-tests` | `machina-tests` + `machina-mtest` |
 | `decode` | `machina-decode` |
 | `disas` | `machina-disas` |
 
@@ -1008,5 +1018,5 @@ names are retired.
 | QMP → MMP | QEMU `qapi/` + `monitor/` |
 | HMP | QEMU `monitor/hmp*.c` |
 | GDB stub | QEMU `gdbstub/` |
-| qtest | QEMU `tests/qtest/libqtest.h` |
+| mtest (← qtest) | QEMU `tests/qtest/libqtest.h` |
 | LoongArch | LoongArch Reference Manual v1.0 + QEMU `target/loongarch/` |
