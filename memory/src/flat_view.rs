@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use machina_core::address::GPA;
+
 use crate::ram::RamBlock;
 use crate::region::{MemoryRegion, MmioOps, RegionType};
 
@@ -10,6 +12,7 @@ use crate::region::{MemoryRegion, MmioOps, RegionType};
 /// region tree.
 pub enum FlatRangeKind {
     Ram { block: Arc<RamBlock> },
+    Rom { block: Arc<RamBlock> },
     Io { ops: Arc<Mutex<Box<dyn MmioOps>>> },
 }
 
@@ -18,7 +21,7 @@ pub enum FlatRangeKind {
 /// start of the owning leaf region that corresponds to
 /// `addr`.
 pub struct FlatRange {
-    pub addr: u64,
+    pub addr: GPA,
     pub size: u64,
     pub kind: FlatRangeKind,
     pub offset_in_region: u64,
@@ -30,7 +33,7 @@ impl FlatRange {
     }
 
     fn end(&self) -> u64 {
-        self.addr + self.size
+        self.addr.0 + self.size
     }
 }
 
@@ -69,19 +72,20 @@ impl FlatView {
         }
 
         // Final sort by address.
-        resolved.sort_by_key(|r| r.addr);
+        resolved.sort_by_key(|r| r.addr.0);
         Self { ranges: resolved }
     }
 
     /// Binary-search lookup.  Returns the range containing
     /// `addr`, if any.
-    pub fn lookup(&self, addr: u64) -> Option<&FlatRange> {
-        let idx = self.ranges.partition_point(|r| r.addr <= addr);
+    pub fn lookup(&self, addr: GPA) -> Option<&FlatRange> {
+        let a = addr.0;
+        let idx = self.ranges.partition_point(|r| r.addr.0 <= a);
         if idx == 0 {
             return None;
         }
         let r = &self.ranges[idx - 1];
-        if addr < r.end() {
+        if a < r.end() {
             Some(r)
         } else {
             None
@@ -115,6 +119,17 @@ impl FlatView {
                     offset_in_region: 0,
                 });
             }
+            RegionType::Rom { block } => {
+                out.push(RawRange {
+                    addr: base,
+                    size: region.size,
+                    priority: prio,
+                    kind: FlatRangeKind::Rom {
+                        block: Arc::clone(block),
+                    },
+                    offset_in_region: 0,
+                });
+            }
             RegionType::Io { ops } => {
                 out.push(RawRange {
                     addr: base,
@@ -126,11 +141,116 @@ impl FlatView {
                     offset_in_region: 0,
                 });
             }
+            RegionType::Alias {
+                target,
+                offset: alias_off,
+            } => {
+                Self::collect_alias(
+                    target,
+                    base,
+                    *alias_off,
+                    region.size,
+                    prio,
+                    out,
+                );
+            }
             RegionType::Container => {}
         }
 
         for sub in &region.subregions {
-            Self::collect(&sub.region, base + sub.offset, prio, out);
+            Self::collect(&sub.region, base + sub.offset.0, prio, out);
+        }
+    }
+
+    /// Collect a leaf through an alias indirection.  For leaf
+    /// targets (Ram/Rom/Io) the alias offset is forwarded as
+    /// `offset_in_region`.  Container and nested-alias targets
+    /// are recursed into with clipped bounds.
+    fn collect_alias(
+        target: &MemoryRegion,
+        base: u64,
+        alias_off: u64,
+        alias_size: u64,
+        prio: i32,
+        out: &mut Vec<RawRange>,
+    ) {
+        if !target.enabled {
+            return;
+        }
+        match &target.region_type {
+            RegionType::Ram { block } => {
+                out.push(RawRange {
+                    addr: base,
+                    size: alias_size,
+                    priority: prio,
+                    kind: FlatRangeKind::Ram {
+                        block: Arc::clone(block),
+                    },
+                    offset_in_region: alias_off,
+                });
+            }
+            RegionType::Rom { block } => {
+                out.push(RawRange {
+                    addr: base,
+                    size: alias_size,
+                    priority: prio,
+                    kind: FlatRangeKind::Rom {
+                        block: Arc::clone(block),
+                    },
+                    offset_in_region: alias_off,
+                });
+            }
+            RegionType::Io { ops } => {
+                out.push(RawRange {
+                    addr: base,
+                    size: alias_size,
+                    priority: prio,
+                    kind: FlatRangeKind::Io {
+                        ops: Arc::clone(ops),
+                    },
+                    offset_in_region: alias_off,
+                });
+            }
+            RegionType::Alias {
+                target: inner,
+                offset: inner_off,
+            } => {
+                // Nested alias: compose offsets.
+                Self::collect_alias(
+                    inner,
+                    base,
+                    alias_off + inner_off,
+                    alias_size,
+                    prio,
+                    out,
+                );
+            }
+            RegionType::Container => {
+                // Recurse into subregions, clipping to the
+                // alias window [alias_off, alias_off+size).
+                for sub in &target.subregions {
+                    let sub_start = sub.offset.0;
+                    let sub_end = sub_start + sub.region.size;
+                    let win_start = alias_off;
+                    let win_end = alias_off + alias_size;
+                    if sub_end <= win_start || sub_start >= win_end {
+                        continue;
+                    }
+                    let clip_start = sub_start.max(win_start);
+                    let clip_end = sub_end.min(win_end);
+                    let new_base = base + (clip_start - win_start);
+                    let new_size = clip_end - clip_start;
+                    let off_in_sub = clip_start - sub_start;
+                    Self::collect_alias(
+                        &sub.region,
+                        new_base,
+                        off_in_sub,
+                        new_size,
+                        prio,
+                        out,
+                    );
+                }
+            }
         }
     }
 
@@ -144,14 +264,13 @@ impl FlatView {
         // Collect existing ranges that overlap [cur, end).
         let mut overlaps: Vec<(u64, u64)> = resolved
             .iter()
-            .filter(|r| r.addr < end && r.end() > cur)
-            .map(|r| (r.addr, r.end()))
+            .filter(|r| r.addr.0 < end && r.end() > cur)
+            .map(|r| (r.addr.0, r.end()))
             .collect();
         overlaps.sort_by_key(|&(a, _)| a);
 
         for (oa, ob) in &overlaps {
             if cur < *oa {
-                // Gap before this overlap — fill it.
                 let gap_end = (*oa).min(end);
                 Self::push_fragment(resolved, &raw, cur, gap_end);
             }
@@ -176,12 +295,15 @@ impl FlatView {
             FlatRangeKind::Ram { block } => FlatRangeKind::Ram {
                 block: Arc::clone(block),
             },
+            FlatRangeKind::Rom { block } => FlatRangeKind::Rom {
+                block: Arc::clone(block),
+            },
             FlatRangeKind::Io { ops } => FlatRangeKind::Io {
                 ops: Arc::clone(ops),
             },
         };
         resolved.push(FlatRange {
-            addr: start,
+            addr: GPA::new(start),
             size: end - start,
             kind,
             offset_in_region: raw.offset_in_region + offset_delta,

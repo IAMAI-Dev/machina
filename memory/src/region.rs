@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use machina_core::address::GPA;
+
 use crate::ram::RamBlock;
 
 // ----- MMIO callback trait -----
@@ -18,8 +20,19 @@ pub trait MmioOps: Send {
 // ----- Region type discriminant -----
 
 pub enum RegionType {
-    Ram { block: Arc<RamBlock> },
-    Io { ops: Arc<Mutex<Box<dyn MmioOps>>> },
+    Ram {
+        block: Arc<RamBlock>,
+    },
+    Rom {
+        block: Arc<RamBlock>,
+    },
+    Io {
+        ops: Arc<Mutex<Box<dyn MmioOps>>>,
+    },
+    Alias {
+        target: Box<MemoryRegion>,
+        offset: u64,
+    },
     Container,
 }
 
@@ -27,7 +40,7 @@ pub enum RegionType {
 
 pub struct SubRegion {
     pub region: MemoryRegion,
-    pub offset: u64,
+    pub offset: GPA,
 }
 
 // ----- MemoryRegion tree node -----
@@ -71,6 +84,24 @@ impl MemoryRegion {
         (region, block)
     }
 
+    /// Create a read-only ROM region and return the shared
+    /// `RamBlock` handle alongside it.  Writes to ROM are
+    /// silently dropped.
+    pub fn rom(name: &str, size: u64) -> (Self, Arc<RamBlock>) {
+        let block = Arc::new(RamBlock::new(size));
+        let region = Self {
+            name: name.to_string(),
+            size,
+            region_type: RegionType::Rom {
+                block: Arc::clone(&block),
+            },
+            priority: 0,
+            subregions: Vec::new(),
+            enabled: true,
+        };
+        (region, block)
+    }
+
     /// Create an MMIO region backed by device callbacks.
     pub fn io(name: &str, size: u64, ops: Box<dyn MmioOps>) -> Self {
         Self {
@@ -85,9 +116,30 @@ impl MemoryRegion {
         }
     }
 
+    /// Create an alias window into `target` starting at byte
+    /// `offset` within the target region.
+    pub fn alias(
+        name: &str,
+        target: MemoryRegion,
+        offset: u64,
+        size: u64,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            size,
+            region_type: RegionType::Alias {
+                target: Box::new(target),
+                offset,
+            },
+            priority: 0,
+            subregions: Vec::new(),
+            enabled: true,
+        }
+    }
+
     /// Add a child region at `offset` within this region's
     /// address space, using the child's existing priority.
-    pub fn add_subregion(&mut self, region: MemoryRegion, offset: u64) {
+    pub fn add_subregion(&mut self, region: MemoryRegion, offset: GPA) {
         self.subregions.push(SubRegion { region, offset });
     }
 
@@ -95,7 +147,7 @@ impl MemoryRegion {
     pub fn add_subregion_with_priority(
         &mut self,
         mut region: MemoryRegion,
-        offset: u64,
+        offset: GPA,
         priority: i32,
     ) {
         region.priority = priority;

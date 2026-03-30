@@ -3,7 +3,6 @@ use machina_backend::x86_64::emitter::*;
 use machina_backend::x86_64::regs::*;
 use machina_backend::x86_64::X86_64CodeGen;
 use machina_backend::HostCodeGen;
-use machina_core::{Context, Op, OpIdx, Opcode, Type};
 
 // -- regs tests --
 

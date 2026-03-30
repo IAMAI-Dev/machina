@@ -1,6 +1,5 @@
 //! Multi-threaded TCG (MTTCG) concurrent execution tests.
 
-use std::sync::Arc;
 use std::thread;
 
 use machina_backend::X86_64CodeGen;
@@ -8,7 +7,7 @@ use machina_core::context::Context;
 use machina_core::tb::EXCP_ECALL;
 use machina_core::TempIdx;
 use machina_exec::exec_loop::{cpu_exec_loop_mt, ExitReason};
-use machina_exec::{ExecEnv, GuestCpu, PerCpuState, SharedState};
+use machina_exec::{ExecEnv, GuestCpu, PerCpuState};
 use machina_frontend::riscv::cpu::RiscvCpu;
 use machina_frontend::riscv::ext::RiscvCfg;
 use machina_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
@@ -19,17 +18,6 @@ const NUM_GPRS: usize = 32;
 struct TestCpu {
     cpu: RiscvCpu,
     code: Vec<u8>,
-}
-
-impl TestCpu {
-    fn new(insns: &[u32]) -> Self {
-        let code: Vec<u8> =
-            insns.iter().flat_map(|i| i.to_le_bytes()).collect();
-        Self {
-            cpu: RiscvCpu::new(),
-            code,
-        }
-    }
 }
 
 impl GuestCpu for TestCpu {

@@ -1,5 +1,6 @@
 pub mod address;
 pub mod context;
+pub mod cpu;
 pub mod dump;
 pub mod ir_builder;
 pub mod label;
@@ -13,6 +14,7 @@ pub mod types;
 
 pub use address::{GPA, GVA, HVA};
 pub use context::Context;
+pub use cpu::GuestCpu;
 pub use label::{Label, LabelUse, RelocKind};
 pub use machine::{Machine, MachineOpts};
 pub use op::{LifeData, Op, OpIdx, MAX_OP_ARGS};
