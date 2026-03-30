@@ -88,6 +88,7 @@ fn test_bare_mode_passthrough() {
             AccessType::Read,
             PrivLevel::Machine,
             0,
+            4,
             None,
             &dummy,
             no_write,
@@ -116,6 +117,7 @@ fn test_sv39_identity_map() {
         AccessType::Read,
         PrivLevel::Machine,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -127,6 +129,7 @@ fn test_sv39_identity_map() {
         AccessType::Write,
         PrivLevel::Machine,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -156,6 +159,7 @@ fn test_sv39_page_fault() {
             AccessType::Read,
             PrivLevel::Machine,
             0,
+            4,
             None,
             &reader,
             no_write,
@@ -171,6 +175,7 @@ fn test_sv39_page_fault() {
         AccessType::Read,
         PrivLevel::Machine,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -184,6 +189,7 @@ fn test_sv39_page_fault() {
         AccessType::Execute,
         PrivLevel::Machine,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -197,6 +203,7 @@ fn test_sv39_page_fault() {
         AccessType::Write,
         PrivLevel::Machine,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -225,6 +232,7 @@ fn test_tlb_hit() {
         AccessType::Read,
         PrivLevel::Machine,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -240,6 +248,7 @@ fn test_tlb_hit() {
         AccessType::Read,
         PrivLevel::Machine,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -269,6 +278,7 @@ fn test_superpage() {
         AccessType::Read,
         PrivLevel::User,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -281,6 +291,7 @@ fn test_superpage() {
         AccessType::Write,
         PrivLevel::User,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -293,6 +304,7 @@ fn test_superpage() {
         AccessType::Execute,
         PrivLevel::User,
         0,
+        4,
         None,
         &reader,
         no_write,
@@ -326,6 +338,7 @@ fn test_ad_bit_update_on_read() {
         AccessType::Read,
         PrivLevel::Machine,
         0,
+        4,
         None,
         mem_reader_rc(&mem),
         mem_writer_rc(&mem),
@@ -364,6 +377,7 @@ fn test_ad_bit_update_on_write() {
         AccessType::Write,
         PrivLevel::Machine,
         0,
+        4,
         None,
         mem_reader_rc(&mem),
         mem_writer_rc(&mem),
@@ -401,6 +415,7 @@ fn test_sum_blocks_s_mode_execute_on_u_page() {
         AccessType::Execute,
         PrivLevel::Supervisor,
         MSTATUS_SUM,
+        4,
         None,
         &reader,
         no_write,
@@ -433,6 +448,7 @@ fn test_sum_allows_s_mode_read_on_u_page() {
         AccessType::Read,
         PrivLevel::Supervisor,
         MSTATUS_SUM,
+        4,
         None,
         &reader,
         no_write,
@@ -475,6 +491,7 @@ fn test_pmp_deny_after_translation() {
         AccessType::Read,
         PrivLevel::Supervisor,
         0,
+        4,
         Some(&pmp),
         &reader,
         no_write,
@@ -483,5 +500,72 @@ fn test_pmp_deny_after_translation() {
         err,
         Err(Exception::LoadAccessFault),
         "PMP must deny read when R bit is not set"
+    );
+}
+
+#[test]
+fn test_pmp_subpage_deny() {
+    // PMP entry covers only 4 bytes (NA4 at PA 0x80).
+    // A 4-byte access to [0x80, 0x84) should be denied (no R),
+    // but a 4-byte access to [0x84, 0x88) on the same page
+    // should be allowed (no PMP match, M-mode default allow).
+    let mem_size = 0x10000;
+    let mut mem = vec![0u8; mem_size];
+
+    // Identity-map page 0 (VA 0..0xFFF -> PA 0..0xFFF).
+    write_pte(&mut mem, 0x1000, ptr_pte(2));
+    write_pte(&mut mem, 0x2000, ptr_pte(3));
+    let flags =
+        PTE_V | PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
+    write_pte(&mut mem, 0x3000, leaf_pte(0, flags));
+
+    let mut mmu = Mmu::new();
+    mmu.set_satp(satp_sv39(0, 1));
+
+    // NA4 at addr 0x80: pmpaddr = 0x80 >> 2 = 0x20.
+    // cfg = NA4 | L (locked, so it applies to M-mode too),
+    // no R/W/X => 0x10 | 0x80 = 0x90.
+    let mut pmp = Pmp::new();
+    pmp.set_cfg(0, 0x90); // L=1 | NA4, no R/W/X
+    pmp.set_addr(0, 0x20); // PA 0x80
+
+    let reader = mem_reader(&mem);
+
+    // 4-byte read at PA 0x80 must be denied.
+    let err = mmu.translate(
+        0x0080,
+        AccessType::Read,
+        PrivLevel::Machine,
+        0,
+        4,
+        Some(&pmp),
+        &reader,
+        no_write,
+    );
+    assert_eq!(
+        err,
+        Err(Exception::LoadAccessFault),
+        "PMP must deny 4-byte read at subpage region"
+    );
+
+    // Flush TLB so the next call does a fresh walk.
+    mmu.flush();
+
+    // 4-byte read at PA 0x84 must succeed (outside NA4
+    // region, M-mode default allow).
+    let pa = mmu.translate(
+        0x0084,
+        AccessType::Read,
+        PrivLevel::Machine,
+        0,
+        4,
+        Some(&pmp),
+        &reader,
+        no_write,
+    );
+    assert_eq!(
+        pa,
+        Ok(0x0084),
+        "access outside PMP subpage region must succeed"
     );
 }

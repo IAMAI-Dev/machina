@@ -17,19 +17,31 @@ pub fn load_binary(
     addr: GPA,
     as_: &AddressSpace,
 ) -> Result<LoadInfo, String> {
-    let chunks = data.chunks(4);
-    for (i, chunk) in chunks.enumerate() {
-        let offset = (i * 4) as u64;
-        let mut val = 0u32;
-        for (j, &b) in chunk.iter().enumerate() {
-            val |= (b as u32) << (j * 8);
-        }
-        as_.write_u32(GPA::new(addr.0 + offset), val);
-    }
+    write_bytes(as_, addr, data);
     Ok(LoadInfo {
         entry: addr,
         size: data.len() as u64,
     })
+}
+
+/// Write `data` into `as_` starting at `base`, using 4-byte
+/// writes for aligned chunks and single-byte writes for the
+/// trailing remainder so that no bytes beyond `data.len()`
+/// are overwritten.
+fn write_bytes(as_: &AddressSpace, base: GPA, data: &[u8]) {
+    let full = data.len() / 4;
+    for i in 0..full {
+        let off = (i * 4) as u64;
+        let val = u32::from_le_bytes(
+            data[i * 4..i * 4 + 4].try_into().unwrap(),
+        );
+        as_.write_u32(GPA::new(base.0 + off), val);
+    }
+    let rem_start = full * 4;
+    for (j, &b) in data[rem_start..].iter().enumerate() {
+        let off = (rem_start + j) as u64;
+        as_.write(GPA::new(base.0 + off), 1, b as u64);
+    }
 }
 
 // ---- minimal ELF-64 constants ----
@@ -108,14 +120,7 @@ pub fn load_elf(data: &[u8], as_: &AddressSpace) -> Result<LoadInfo, String> {
         }
 
         let seg = &data[p_offset..p_offset + p_filesz];
-        for (j, chunk) in seg.chunks(4).enumerate() {
-            let gpa_off = (j * 4) as u64;
-            let mut val = 0u32;
-            for (k, &b) in chunk.iter().enumerate() {
-                val |= (b as u32) << (k * 8);
-            }
-            as_.write_u32(GPA::new(p_paddr + gpa_off), val);
-        }
+        write_bytes(as_, GPA::new(p_paddr), seg);
 
         // BSS: zero-fill [p_filesz .. p_memsz)
         let bss_start = p_paddr + p_filesz as u64;

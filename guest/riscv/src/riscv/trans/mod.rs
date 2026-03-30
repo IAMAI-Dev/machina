@@ -266,13 +266,24 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    fn trans_sfence_vma(&mut self, ir: &mut Context, _a: &ArgsR) -> bool {
-        // TLB flush. Exit TB with EXCP_SFENCE_VMA so the
-        // execution loop can call cpu.tlb_flush().
+    fn trans_sfence_vma(
+        &mut self,
+        ir: &mut Context,
+        _a: &ArgsR,
+    ) -> bool {
+        // Always perform a full TLB flush (correct but
+        // conservative).  Exit TB with EXCP_SFENCE_VMA so the
+        // execution loop calls cpu.tlb_flush().
         // No chaining: address translation may change.
         //
-        // TODO: pass rs1/rs2 to enable page-specific flush
-        // instead of full TLB invalidation.
+        // TODO: page-specific flush optimisation is deferred.
+        // When rs1 != x0 the spec allows flushing only the
+        // single page identified by rs1, which requires
+        // either (a) storing the rs1 value in a CPU-state
+        // scratch field before the exit and reading it in the
+        // exec loop, or (b) introducing a distinct exit code
+        // per flush granularity.  Until then the full-flush
+        // fallback is architecturally correct.
         let pc = ir.new_const(Type::I64, self.base.pc_next);
         ir.gen_mov(Type::I64, self.pc, pc);
         ir.gen_exit_tb(EXCP_SFENCE_VMA);

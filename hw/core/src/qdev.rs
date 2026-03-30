@@ -16,6 +16,7 @@ pub trait Device: Send + Sync {
 pub struct DeviceState {
     pub name: String,
     pub realized: bool,
+    parent_bus: Option<String>,
 }
 
 impl DeviceState {
@@ -23,6 +24,17 @@ impl DeviceState {
         Self {
             name: name.to_string(),
             realized: false,
+            parent_bus: None,
         }
+    }
+
+    /// Attach this device to the named bus.
+    pub fn set_parent_bus(&mut self, bus: &str) {
+        self.parent_bus = Some(bus.to_string());
+    }
+
+    /// Return the parent bus name, if any.
+    pub fn parent_bus(&self) -> Option<&str> {
+        self.parent_bus.as_deref()
     }
 }

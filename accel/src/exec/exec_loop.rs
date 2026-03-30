@@ -143,6 +143,11 @@ where
                 return ExitReason::Halted;
             }
             v if v == EXCP_ECALL as usize => {
+                // The translator emits a unified EXCP_ECALL;
+                // the per-privilege exception code (EcallFromU
+                // / EcallFromS / EcallFromM) is determined
+                // here at runtime, because privilege can
+                // change between translation and execution.
                 per_cpu.stats.real_exit += 1;
                 let pl = cpu.privilege_level();
                 return ExitReason::Ecall { priv_level: pl };

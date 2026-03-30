@@ -135,6 +135,9 @@ impl Mmu {
     /// Translate a guest virtual address to a physical
     /// address using Sv39 page tables and TLB.
     ///
+    /// `access_size` is the real memory access width in bytes
+    /// (1, 2, 4, or 8) and is forwarded to PMP checks.
+    ///
     /// `mem_read` reads an 8-byte value from guest physical
     /// memory.  `mem_write` writes an 8-byte value (used for
     /// hardware A/D bit updates in PTEs).
@@ -148,6 +151,7 @@ impl Mmu {
         access: AccessType,
         priv_level: PrivLevel,
         mstatus: u64,
+        access_size: u64,
         pmp: Option<&Pmp>,
         mem_read: impl Fn(u64) -> u64,
         mut mem_write: impl FnMut(u64, u64),
@@ -182,7 +186,7 @@ impl Mmu {
                     if let Some(p) = pmp {
                         p.check_access(
                             pa,
-                            entry.page_size,
+                            access_size,
                             access,
                             priv_level,
                         )?;
@@ -228,7 +232,7 @@ impl Mmu {
         let pa = (ppn << 12) | offset;
 
         if let Some(p) = pmp {
-            p.check_access(pa, pg_size, access, priv_level)?;
+            p.check_access(pa, access_size, access, priv_level)?;
         }
 
         Ok(pa)
