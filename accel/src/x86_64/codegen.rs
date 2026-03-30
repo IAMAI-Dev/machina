@@ -1,11 +1,11 @@
 use crate::code_buffer::CodeBuffer;
 use crate::constraint::OpConstraint;
+use crate::ir::{Cond, Context, Op, Opcode, Type};
 use crate::x86_64::emitter::*;
 use crate::x86_64::regs::{
     Reg, CALLEE_SAVED, CALL_ARG_REGS, STACK_ADDEND, STATIC_CALL_ARGS_SIZE,
 };
 use crate::HostCodeGen;
-use crate::ir::{Cond, Context, Op, Opcode, Type};
 
 impl HostCodeGen for X86_64CodeGen {
     fn op_constraint(&self, opc: Opcode) -> &'static OpConstraint {

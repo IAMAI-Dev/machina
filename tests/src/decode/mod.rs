@@ -270,7 +270,7 @@ fn parse_mini_decode() {
 #[test]
 fn parse_riscv32_decode() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let p = parse(&input).unwrap();
     assert_eq!(p.patterns.len(), 155);
     assert!(p.fields.contains_key("imm_b"));
@@ -346,7 +346,7 @@ lui  .................... ..... 0110111 @u
 #[test]
 fn auto_argset_for_fence() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let p = parse(&input).unwrap();
     let fence = p.patterns.iter().find(|p| p.name == "fence").unwrap();
     assert_eq!(fence.args_name, "_auto_fence");
@@ -362,7 +362,7 @@ fn auto_argset_for_fence() {
 #[test]
 fn pattern_masks_r_type() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let p = parse(&input).unwrap();
     let find = |name: &str| p.patterns.iter().find(|p| p.name == name).unwrap();
     let add = find("add");
@@ -378,7 +378,7 @@ fn pattern_masks_r_type() {
 #[test]
 fn pattern_masks_i_type() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let p = parse(&input).unwrap();
     let find = |name: &str| p.patterns.iter().find(|p| p.name == name).unwrap();
     let addi = find("addi");
@@ -392,7 +392,7 @@ fn pattern_masks_i_type() {
 #[test]
 fn pattern_masks_b_type() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let p = parse(&input).unwrap();
     let find = |name: &str| p.patterns.iter().find(|p| p.name == name).unwrap();
     let beq = find("beq");
@@ -405,7 +405,7 @@ fn pattern_masks_b_type() {
 #[test]
 fn pattern_masks_shift() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let p = parse(&input).unwrap();
     let find = |name: &str| p.patterns.iter().find(|p| p.name == name).unwrap();
     let slli = find("slli");
@@ -564,7 +564,7 @@ fn extract_fence_iorw() {
 
 fn riscv_parsed() -> Parsed {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     parse(&input).unwrap()
 }
 
@@ -647,7 +647,7 @@ fn generate_mini_decode() {
 #[test]
 fn generate_riscv32_decode() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let mut out = Vec::new();
     generate(&input, &mut out).unwrap();
     let code = String::from_utf8(out).unwrap();
@@ -670,7 +670,7 @@ fn generate_ecall_no_args() {
 #[test]
 fn generate_fence_auto_struct() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let mut out = Vec::new();
     generate(&input, &mut out).unwrap();
     let code = String::from_utf8(out).unwrap();
@@ -681,7 +681,7 @@ fn generate_fence_auto_struct() {
 #[test]
 fn generate_no_identity_mask() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let mut out = Vec::new();
     generate(&input, &mut out).unwrap();
     let code = String::from_utf8(out).unwrap();
@@ -693,7 +693,7 @@ fn generate_no_identity_mask() {
 #[test]
 fn generate_no_shift_zero() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn32.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn32.decode").unwrap();
     let mut out = Vec::new();
     generate(&input, &mut out).unwrap();
     let code = String::from_utf8(out).unwrap();
@@ -795,7 +795,7 @@ fn func_sreg_register() {
 #[test]
 fn parse_riscv16_decode() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn16.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn16.decode").unwrap();
     let p = parse_with_width(&input, 16).unwrap();
     assert!(p.argsets.get("r").unwrap().is_extern);
     assert!(p.argsets.get("i").unwrap().is_extern);
@@ -805,7 +805,7 @@ fn parse_riscv16_decode() {
 #[test]
 fn generate_riscv16_decode() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn16.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn16.decode").unwrap();
     let mut out = Vec::new();
     generate_with_width(&input, &mut out, 16).unwrap();
     let code = String::from_utf8(out).unwrap();
@@ -823,7 +823,7 @@ fn generate_riscv16_decode() {
 
 fn rvc_parsed() -> Parsed {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn16.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn16.decode").unwrap();
     parse_with_width(&input, 16).unwrap()
 }
 
@@ -1026,7 +1026,7 @@ fn c_ebreak_matches() {
 #[test]
 fn generate_16bit_no_u32_leak() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn16.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn16.decode").unwrap();
     let mut out = Vec::new();
     generate_with_width(&input, &mut out, 16).unwrap();
     let code = String::from_utf8(out).unwrap();
@@ -1038,7 +1038,7 @@ fn generate_16bit_no_u32_leak() {
 #[test]
 fn generate_16bit_trait_dedup() {
     let input =
-        std::fs::read_to_string("../frontend/src/riscv/insn16.decode").unwrap();
+        std::fs::read_to_string("../guest/riscv/src/riscv/insn16.decode").unwrap();
     let mut out = Vec::new();
     generate_with_width(&input, &mut out, 16).unwrap();
     let code = String::from_utf8(out).unwrap();

@@ -10,4 +10,4 @@ path = "src/main.rs"
 [dependencies]
 machina-accel = { path = "../../accel" }
 machina-disas = { path = "../../disas" }
-machina-frontend = { path = "../../frontend" }
+machina-guest-riscv = { path = "../../guest/riscv" }

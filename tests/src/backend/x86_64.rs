@@ -1066,13 +1066,22 @@ fn x86cond_from_tcg() {
     assert_eq!(X86Cond::from_tcg(machina_accel::ir::Cond::Lt), X86Cond::Jl);
     assert_eq!(X86Cond::from_tcg(machina_accel::ir::Cond::Ge), X86Cond::Jge);
     assert_eq!(X86Cond::from_tcg(machina_accel::ir::Cond::Ltu), X86Cond::Jb);
-    assert_eq!(X86Cond::from_tcg(machina_accel::ir::Cond::Geu), X86Cond::Jae);
+    assert_eq!(
+        X86Cond::from_tcg(machina_accel::ir::Cond::Geu),
+        X86Cond::Jae
+    );
 }
 
 #[test]
 fn x86cond_from_tcg_always_never_fallback() {
-    assert_eq!(X86Cond::from_tcg(machina_accel::ir::Cond::Always), X86Cond::Je);
-    assert_eq!(X86Cond::from_tcg(machina_accel::ir::Cond::Never), X86Cond::Jne);
+    assert_eq!(
+        X86Cond::from_tcg(machina_accel::ir::Cond::Always),
+        X86Cond::Je
+    );
+    assert_eq!(
+        X86Cond::from_tcg(machina_accel::ir::Cond::Never),
+        X86Cond::Jne
+    );
 }
 
 #[test]

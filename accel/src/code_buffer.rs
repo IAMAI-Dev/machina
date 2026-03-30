@@ -172,7 +172,7 @@ impl CodeBuffer {
     pub fn patch_u32(&self, offset: usize, val: u32) {
         assert!(offset + 4 <= self.size);
         let ptr = unsafe { self.ptr.add(offset) };
-        if (ptr as usize) % 4 == 0 {
+        if (ptr as usize).is_multiple_of(4) {
             use std::sync::atomic::{AtomicU32, Ordering};
             // SAFETY: ptr is within our mmap'd region and
             // 4-byte aligned.

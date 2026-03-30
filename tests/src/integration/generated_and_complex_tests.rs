@@ -685,7 +685,13 @@ fn test_brcond_on_temp_eq() {
 
         ctx.gen_insn_start(0x5130);
         ctx.gen_add(Type::I64, t_add, regs[1], regs[2]);
-        ctx.gen_brcond(Type::I64, t_add, c30, machina_accel::ir::Cond::Eq, label_eq);
+        ctx.gen_brcond(
+            Type::I64,
+            t_add,
+            c30,
+            machina_accel::ir::Cond::Eq,
+            label_eq,
+        );
         ctx.gen_mov(Type::I64, t_out, c0);
         ctx.gen_mov(Type::I64, regs[4], t_out);
         ctx.gen_br(label_end);

@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use crate::code_buffer::CodeBuffer;
-use crate::HostCodeGen;
 use crate::ir::tb::{TranslationBlock, TB_HASH_SIZE};
+use crate::HostCodeGen;
 
 const MAX_TBS: usize = 65536;
 

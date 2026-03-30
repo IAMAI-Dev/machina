@@ -1,6 +1,6 @@
 use crate::constraint::*;
-use crate::x86_64::regs::{Reg, ALLOCATABLE_REGS};
 use crate::ir::Opcode;
+use crate::x86_64::regs::{Reg, ALLOCATABLE_REGS};
 
 const R: crate::ir::RegSet = ALLOCATABLE_REGS;
 const R_NO_RCX: crate::ir::RegSet = crate::ir::RegSet::from_raw(

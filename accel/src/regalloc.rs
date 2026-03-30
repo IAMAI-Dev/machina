@@ -1,10 +1,10 @@
 use crate::code_buffer::CodeBuffer;
 use crate::constraint::OpConstraint;
-use crate::HostCodeGen;
 use crate::ir::label::RelocKind;
 use crate::ir::temp::TempKind;
 use crate::ir::types::{RegSet, TempVal};
 use crate::ir::{Context, OpFlags, Opcode, TempIdx, OPCODE_DEFS};
+use crate::HostCodeGen;
 
 /// Register allocator state.
 struct RegAllocState {

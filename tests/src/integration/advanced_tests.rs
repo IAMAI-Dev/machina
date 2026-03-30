@@ -1,9 +1,9 @@
 use machina_accel::code_buffer::CodeBuffer;
+use machina_accel::ir::types::Type;
+use machina_accel::ir::{Context, Op, Opcode};
 use machina_accel::translate::translate_and_execute;
 use machina_accel::HostCodeGen;
 use machina_accel::X86_64CodeGen;
-use machina_accel::ir::types::Type;
-use machina_accel::ir::{Context, Op, Opcode};
 
 use super::{
     run_riscv_tb, setup_riscv_globals, split_i128, split_u128, RiscvCpuState,

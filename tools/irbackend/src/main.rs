@@ -10,9 +10,9 @@ use std::io::{self, BufWriter, Write};
 use std::process;
 
 use machina_accel::code_buffer::CodeBuffer;
+use machina_accel::ir::serialize;
 use machina_accel::translate::translate;
 use machina_accel::{HostCodeGen, X86_64CodeGen};
-use machina_accel::ir::serialize;
 
 struct Args {
     ir_path: String,

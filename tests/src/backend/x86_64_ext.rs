@@ -1,9 +1,9 @@
 use machina_accel::code_buffer::CodeBuffer;
+use machina_accel::ir::{Context, Op, OpIdx, Opcode, Type};
 use machina_accel::x86_64::emitter::*;
 use machina_accel::x86_64::regs::*;
 use machina_accel::x86_64::X86_64CodeGen;
 use machina_accel::HostCodeGen;
-use machina_accel::ir::{Context, Op, OpIdx, Opcode, Type};
 
 fn emit_bytes(f: impl FnOnce(&mut CodeBuffer)) -> Vec<u8> {
     let mut buf = CodeBuffer::new(4096).unwrap();

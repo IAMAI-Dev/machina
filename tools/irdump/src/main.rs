@@ -14,10 +14,10 @@ use machina_accel::ir::context::Context;
 use machina_accel::ir::dump::dump_ops_with;
 use machina_accel::ir::serialize;
 use machina_accel::ir::TempIdx;
-use machina_frontend::riscv::cpu::NUM_GPRS;
-use machina_frontend::riscv::ext::RiscvCfg;
-use machina_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
-use machina_frontend::{translator_loop, DisasJumpType, TranslatorOps};
+use machina_guest_riscv::riscv::cpu::NUM_GPRS;
+use machina_guest_riscv::riscv::ext::RiscvCfg;
+use machina_guest_riscv::riscv::{RiscvDisasContext, RiscvTranslator};
+use machina_guest_riscv::{translator_loop, DisasJumpType, TranslatorOps};
 
 const EM_RISCV: u16 = 243;
 

@@ -2,17 +2,17 @@
 
 use std::thread;
 
-use machina_accel::X86_64CodeGen;
+use machina_accel::exec::exec_loop::{cpu_exec_loop_mt, ExitReason};
+use machina_accel::exec::{ExecEnv, PerCpuState};
 use machina_accel::ir::context::Context;
 use machina_accel::ir::tb::EXCP_ECALL;
 use machina_accel::ir::TempIdx;
-use machina_accel::exec::exec_loop::{cpu_exec_loop_mt, ExitReason};
-use machina_accel::exec::{ExecEnv, PerCpuState};
 use machina_accel::GuestCpu;
-use machina_frontend::riscv::cpu::RiscvCpu;
-use machina_frontend::riscv::ext::RiscvCfg;
-use machina_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
-use machina_frontend::{translator_loop, DisasJumpType, TranslatorOps};
+use machina_accel::X86_64CodeGen;
+use machina_guest_riscv::riscv::cpu::RiscvCpu;
+use machina_guest_riscv::riscv::ext::RiscvCfg;
+use machina_guest_riscv::riscv::{RiscvDisasContext, RiscvTranslator};
+use machina_guest_riscv::{translator_loop, DisasJumpType, TranslatorOps};
 
 const NUM_GPRS: usize = 32;
 

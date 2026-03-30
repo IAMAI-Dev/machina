@@ -2,7 +2,7 @@
 members = [
     "core",
     "accel",
-    "frontend",
+    "guest/riscv",
     "decode",
     "disas",
     "tests",

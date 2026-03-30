@@ -1,9 +1,9 @@
 use machina_accel::code_buffer::CodeBuffer;
+use machina_accel::ir::types::Type;
+use machina_accel::ir::{Context, TempIdx};
 use machina_accel::translate::translate_and_execute;
 use machina_accel::HostCodeGen;
 use machina_accel::X86_64CodeGen;
-use machina_accel::ir::types::Type;
-use machina_accel::ir::{Context, TempIdx};
 
 /// Minimal RISC-V CPU state for testing.
 #[repr(C)]
@@ -46,11 +46,8 @@ pub(super) fn setup_riscv_globals(
     ctx: &mut Context,
 ) -> (TempIdx, [TempIdx; 32], TempIdx) {
     // env pointer is a fixed temp in RBP
-    let env = ctx.new_fixed(
-        Type::I64,
-        machina_accel::x86_64::Reg::Rbp as u8,
-        "env",
-    );
+    let env =
+        ctx.new_fixed(Type::I64, machina_accel::x86_64::Reg::Rbp as u8, "env");
 
     // x0-x31 as globals backed by RiscvCpuState.regs
     let mut reg_temps = [TempIdx(0); 32];

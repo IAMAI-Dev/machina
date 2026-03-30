@@ -5,6 +5,6 @@ edition = "2021"
 
 [dependencies]
 machina-accel = { path = "../accel" }
-machina-frontend = { path = "../frontend" }
+machina-guest-riscv = { path = "../guest/riscv" }
 machina-decode = { path = "../decode" }
 libc = "0.2"

@@ -1,11 +1,12 @@
-pub mod ir;
-pub mod cpu;
 pub mod code_buffer;
 pub mod constraint;
+pub mod cpu;
 pub mod exec;
+pub mod ir;
 pub mod liveness;
 pub mod optimize;
 pub mod regalloc;
+pub mod timer;
 pub mod translate;
 pub mod x86_64;
 
@@ -50,21 +51,12 @@ pub trait HostCodeGen {
     fn init_context(&self, ctx: &mut ir::Context);
 
     /// Return the register constraint for an opcode.
-    fn op_constraint(
-        &self,
-        opc: ir::Opcode,
-    ) -> &'static OpConstraint;
+    fn op_constraint(&self, opc: ir::Opcode) -> &'static OpConstraint;
 
     // -- Register allocator primitives --
 
     /// Emit host mov between two registers.
-    fn tcg_out_mov(
-        &self,
-        buf: &mut CodeBuffer,
-        ty: ir::Type,
-        dst: u8,
-        src: u8,
-    );
+    fn tcg_out_mov(&self, buf: &mut CodeBuffer, ty: ir::Type, dst: u8, src: u8);
 
     /// Emit host load-immediate into a register.
     fn tcg_out_movi(

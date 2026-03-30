@@ -1,9 +1,9 @@
 use machina_accel::code_buffer::CodeBuffer;
+use machina_accel::ir::types::Type;
+use machina_accel::ir::Context;
 use machina_accel::translate::translate_and_execute;
 use machina_accel::HostCodeGen;
 use machina_accel::X86_64CodeGen;
-use machina_accel::ir::types::Type;
-use machina_accel::ir::Context;
 
 use super::{setup_riscv_globals, RiscvCpuState, RiscvCpuStateMem};
 
@@ -102,11 +102,8 @@ fn test_shift_out_rcx_count_non_rcx() {
     let mut ctx = Context::new();
     backend.init_context(&mut ctx);
 
-    let env = ctx.new_fixed(
-        Type::I64,
-        machina_accel::x86_64::Reg::Rbp as u8,
-        "env",
-    );
+    let env =
+        ctx.new_fixed(Type::I64, machina_accel::x86_64::Reg::Rbp as u8, "env");
 
     let c1 = ctx.new_const(Type::I64, 1);
     let cval = ctx.new_const(Type::I64, 0x10);

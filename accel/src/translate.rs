@@ -1,9 +1,9 @@
 use crate::code_buffer::CodeBuffer;
+use crate::ir::Context;
 use crate::liveness::liveness_analysis;
 use crate::optimize::optimize;
 use crate::regalloc::regalloc_and_codegen;
 use crate::HostCodeGen;
-use crate::ir::Context;
 
 /// Full translation pipeline: optimize → liveness → regalloc+codegen.
 /// Returns the offset where TB code starts in the buffer.

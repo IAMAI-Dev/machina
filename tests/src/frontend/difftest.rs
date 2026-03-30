@@ -11,14 +11,14 @@ use std::io::Write;
 use std::process::Command;
 
 use machina_accel::code_buffer::CodeBuffer;
+use machina_accel::ir::Context;
 use machina_accel::translate::translate_and_execute;
 use machina_accel::HostCodeGen;
 use machina_accel::X86_64CodeGen;
-use machina_accel::ir::Context;
-use machina_frontend::riscv::cpu::RiscvCpu;
-use machina_frontend::riscv::ext::RiscvCfg;
-use machina_frontend::riscv::{RiscvDisasContext, RiscvTranslator};
-use machina_frontend::translator_loop;
+use machina_guest_riscv::riscv::cpu::RiscvCpu;
+use machina_guest_riscv::riscv::ext::RiscvCfg;
+use machina_guest_riscv::riscv::{RiscvDisasContext, RiscvTranslator};
+use machina_guest_riscv::translator_loop;
 
 // ── Instruction encoders (reused from mod.rs) ──────────────
 
