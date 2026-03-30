@@ -402,39 +402,32 @@ fn test_irq_updates_cpu_mip() {
     // Threshold for context 0 stays at 0 (default).
     // priority(1) > threshold(0) → active.
 
-    // CPU mip should be clear before IRQ.
-    {
-        let cpus = m.cpus_lock();
-        assert_eq!(
-            cpus[0].csr.mip & (1 << 11),
-            0,
-            "MEI should be clear before IRQ"
-        );
-    }
+    // SharedMip should be clear before IRQ.
+    use std::sync::atomic::Ordering;
+    let mip = m.shared_mip();
+    assert_eq!(
+        mip.load(Ordering::SeqCst) & (1 << 11),
+        0,
+        "MEI should be clear before IRQ"
+    );
 
     // Raise UART IRQ via PLIC source 10.
     m.uart_irq().raise();
 
-    // CPU0 mip should now have MEI (bit 11) set.
-    {
-        let cpus = m.cpus_lock();
-        assert_ne!(
-            cpus[0].csr.mip & (1 << 11),
-            0,
-            "MEI should be set after PLIC source raise"
-        );
-    }
+    // SharedMip should now have MEI (bit 11) set.
+    assert_ne!(
+        mip.load(Ordering::SeqCst) & (1 << 11),
+        0,
+        "MEI should be set after PLIC source raise"
+    );
 
     // Lower UART IRQ.
     m.uart_irq().lower();
 
     // MEI should be cleared.
-    {
-        let cpus = m.cpus_lock();
-        assert_eq!(
-            cpus[0].csr.mip & (1 << 11),
-            0,
-            "MEI should be cleared after IRQ lower"
-        );
-    }
+    assert_eq!(
+        mip.load(Ordering::SeqCst) & (1 << 11),
+        0,
+        "MEI should be cleared after IRQ lower"
+    );
 }

@@ -143,7 +143,29 @@ where
             v if v == EXCP_WFI as usize => {
                 per_cpu.stats.real_exit += 1;
                 cpu.set_halted(true);
-                return ExitReason::Halted;
+                // If already have a pending interrupt,
+                // handle immediately and continue.
+                if cpu.pending_interrupt() {
+                    cpu.set_halted(false);
+                    cpu.handle_interrupt();
+                } else {
+                    // Spin briefly for device IRQ delivery.
+                    // A real impl would use condvar.
+                    let mut woken = false;
+                    for _ in 0..100_000 {
+                        if cpu.pending_interrupt() {
+                            cpu.set_halted(false);
+                            cpu.handle_interrupt();
+                            woken = true;
+                            break;
+                        }
+                        std::hint::spin_loop();
+                    }
+                    if !woken {
+                        return ExitReason::Halted;
+                    }
+                }
+                // Continue execution after WFI wakeup.
             }
             v if v == EXCP_ECALL as usize => {
                 // The translator emits a unified EXCP_ECALL;

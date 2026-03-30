@@ -8,7 +8,7 @@ use machina_accel::exec::ExecEnv;
 use machina_accel::X86_64CodeGen;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
-use machina_system::cpus::{new_shared_mip, FullSystemCpu};
+use machina_system::cpus::FullSystemCpu;
 use machina_system::CpuManager;
 
 fn usage() {
@@ -168,9 +168,9 @@ fn main() {
     let shared = env.shared.clone();
 
     // Take CPU0 state from machine for execution.
-    // The shared_mip allows device IRQ sinks to
-    // atomically update mip visible to the exec loop.
-    let shared_mip = new_shared_mip();
+    // Get shared_mip from machine — same atomic that
+    // device IRQ sinks write to.
+    let shared_mip = machine.shared_mip();
     let cpus = machine.cpus_shared();
     let cpu0 = {
         let mut lock = cpus.lock().unwrap();
