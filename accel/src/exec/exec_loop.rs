@@ -157,6 +157,11 @@ where
                 return ExitReason::Exit(exit_code);
             }
         }
+
+        // Check for pending interrupts after each TB exit.
+        if cpu.pending_interrupt() {
+            cpu.handle_interrupt();
+        }
     }
 }
 

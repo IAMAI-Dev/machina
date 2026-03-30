@@ -135,6 +135,21 @@ pub struct PerCpuState {
     pub stats: ExecStats,
 }
 
+impl PerCpuState {
+    pub fn new() -> Self {
+        Self {
+            jump_cache: JumpCache::new(),
+            stats: ExecStats::default(),
+        }
+    }
+}
+
+impl Default for PerCpuState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Minimum remaining bytes in code buffer before refusing
 /// to translate a new TB.
 const MIN_CODE_BUF_REMAINING: usize = 4096;

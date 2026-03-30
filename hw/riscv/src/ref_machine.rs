@@ -203,6 +203,11 @@ impl RefMachine {
         Arc::clone(&self.cpus)
     }
 
+    /// Expose the CPU vector for CpuManager integration.
+    pub fn cpus_shared(&self) -> Arc<Mutex<Vec<RiscvCpu>>> {
+        self.cpus.clone()
+    }
+
     /// UART → PLIC IRQ line reference.
     pub fn uart_irq(&self) -> &IrqLine {
         self.uart_irq.as_ref().expect("machine not initialized")

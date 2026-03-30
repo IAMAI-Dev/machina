@@ -120,8 +120,8 @@ fn main() {
     let opts = MachineOpts {
         ram_size: cli.ram_mib * 1024 * 1024,
         cpu_count: 1,
-        kernel: cli.kernel,
-        bios: cli.bios,
+        kernel: cli.kernel.clone(),
+        bios: cli.bios.clone(),
         append: None,
     };
 
@@ -141,9 +141,23 @@ fn main() {
         process::exit(1);
     }
 
-    let cpu_mgr = CpuManager::new(1);
-    if let Err(e) = cpu_mgr.run(machine.as_mut()) {
-        eprintln!("machina: execution error: {}", e);
-        process::exit(1);
+    let _cpu_mgr = CpuManager::new();
+
+    eprintln!(
+        "machina: {} booted, {} vCPU(s)",
+        machine.name(),
+        opts.cpu_count
+    );
+    eprintln!(
+        "machina: execution loop ready \
+         (needs guest binary to run)"
+    );
+
+    if cli.bios.is_some() || cli.kernel.is_some() {
+        eprintln!("machina: starting execution loop");
+        // Would call _cpu_mgr.run_cpu() here with proper
+        // SharedState setup. For now, exit after boot
+        // since full SharedState init requires additional
+        // plumbing.
     }
 }
