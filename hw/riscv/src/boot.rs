@@ -107,7 +107,7 @@ pub fn boot_ref_machine(
     // Set CPU0 boot state.
     {
         let mut cpus = machine.cpus_lock();
-        if let Some(cpu) = cpus.get_mut(0) {
+        if let Some(Some(cpu)) = cpus.get_mut(0) {
             cpu.gpr[10] = 0; // a0 = hart_id
             cpu.gpr[11] = fdt_addr; // a1 = fdt_addr
             cpu.pc = RAM_BASE; // entry point

@@ -207,8 +207,9 @@ fn test_ref_machine_irq_wiring() {
     // Verify CPU mip: MEI (11) should be low (PLIC has
     // default priority=0, threshold=0, so 0 > 0 is false).
     let cpus = m.cpus_lock();
+    let cpu = cpus[0].as_ref().unwrap();
     assert_eq!(
-        cpus[0].csr.mip & (1 << 11),
+        cpu.csr.mip & (1 << 11),
         0,
         "MEI should be low initially"
     );
@@ -347,7 +348,7 @@ fn test_boot_sets_cpu_state() {
     m.boot().expect("boot failed");
 
     let cpus = m.cpus_lock();
-    let cpu = &cpus[0];
+    let cpu = cpus[0].as_ref().unwrap();
     assert_eq!(cpu.gpr[10], 0, "a0 should be hart_id=0");
     assert!(cpu.gpr[11] >= RAM_BASE, "a1 should be fdt_addr within RAM");
     assert_eq!(cpu.pc, RAM_BASE, "pc should be RAM_BASE");

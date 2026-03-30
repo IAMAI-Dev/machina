@@ -7,7 +7,6 @@ use std::process;
 use machina_accel::exec::ExecEnv;
 use machina_accel::X86_64CodeGen;
 use machina_core::machine::{Machine, MachineOpts};
-use machina_guest_riscv::riscv::cpu::RiscvCpu;
 use machina_hw_riscv::ref_machine::RefMachine;
 use machina_system::cpus::FullSystemCpu;
 use machina_system::CpuManager;
@@ -168,15 +167,14 @@ fn main() {
     let env = ExecEnv::new(backend);
     let shared = env.shared.clone();
 
-    // Take CPU0 state from machine for execution.
-    // Swap with a fresh RiscvCpu to preserve vector size
-    // (device IRQ sinks use SharedMip, not the vector).
+    // Take CPU0 from machine for execution. After this,
+    // machine.cpus[0] is None — ownership is explicitly
+    // transferred to FullSystemCpu for JIT execution.
+    // Device IRQ delivery uses SharedMip (not the vector).
     let shared_mip = machine.shared_mip();
-    let cpus = machine.cpus_shared();
-    let cpu0 = {
-        let mut lock = cpus.lock().unwrap();
-        std::mem::replace(&mut lock[0], RiscvCpu::new())
-    };
+    let cpu0 = machine
+        .take_cpu(0)
+        .expect("cpu0 must exist after boot");
 
     let ram_ptr = machine.ram_ptr();
     let ram_size = machine.ram_size();

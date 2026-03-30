@@ -149,8 +149,8 @@ pub struct RefMachine {
     aclint: Option<Arc<Mutex<Aclint>>>,
     uart: Option<Arc<Mutex<Uart16550>>>,
     fdt_blob: Option<Vec<u8>>,
-    // Per-hart RiscvCpu instances.
-    pub(crate) cpus: Arc<Mutex<Vec<RiscvCpu>>>,
+    // Per-hart RiscvCpu instances. None after take_cpu().
+    pub(crate) cpus: Arc<Mutex<Vec<Option<RiscvCpu>>>>,
     // Shared mip for device IRQ delivery to exec loop.
     pub(crate) shared_mip: Arc<AtomicU64>,
     // WFI waker: IRQ sinks call wake() to unblock halted CPU.
@@ -210,17 +210,30 @@ impl RefMachine {
     }
 
     /// Lock the CPU vector for shared access.
-    pub fn cpus_lock(&self) -> MutexGuard<'_, Vec<RiscvCpu>> {
+    pub fn cpus_lock(
+        &self,
+    ) -> MutexGuard<'_, Vec<Option<RiscvCpu>>> {
         self.cpus.lock().unwrap()
     }
 
+    /// Take CPU out of the machine for execution.
+    /// Returns None if already taken or index invalid.
+    pub fn take_cpu(&self, idx: usize) -> Option<RiscvCpu> {
+        let mut lock = self.cpus.lock().unwrap();
+        lock.get_mut(idx).and_then(|slot| slot.take())
+    }
+
     /// Get a clone of the shared CPU vector Arc.
-    pub fn cpus_arc(&self) -> Arc<Mutex<Vec<RiscvCpu>>> {
+    pub fn cpus_arc(
+        &self,
+    ) -> Arc<Mutex<Vec<Option<RiscvCpu>>>> {
         Arc::clone(&self.cpus)
     }
 
     /// Expose the CPU vector for CpuManager integration.
-    pub fn cpus_shared(&self) -> Arc<Mutex<Vec<RiscvCpu>>> {
+    pub fn cpus_shared(
+        &self,
+    ) -> Arc<Mutex<Vec<Option<RiscvCpu>>>> {
         self.cpus.clone()
     }
 
@@ -426,9 +439,10 @@ impl Machine for RefMachine {
 
         // Create per-hart CPUs.
         {
-            let mut cpus = Vec::with_capacity(opts.cpu_count as usize);
+            let mut cpus =
+                Vec::with_capacity(opts.cpu_count as usize);
             for _ in 0..opts.cpu_count {
-                cpus.push(RiscvCpu::new());
+                cpus.push(Some(RiscvCpu::new()));
             }
             self.cpus = Arc::new(Mutex::new(cpus));
         }
