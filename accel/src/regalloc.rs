@@ -222,11 +222,9 @@ fn clobber_caller_saved(
     state: &mut RegAllocState,
     output: Option<TempIdx>,
 ) {
-    const CALLER_SAVED: [u8; 9] =
-        [0, 1, 2, 6, 7, 8, 9, 10, 11];
+    const CALLER_SAVED: [u8; 9] = [0, 1, 2, 6, 7, 8, 9, 10, 11];
     for &reg in &CALLER_SAVED {
-        if let Some(tidx) = state.reg_to_temp[reg as usize]
-        {
+        if let Some(tidx) = state.reg_to_temp[reg as usize] {
             // Skip the op's output — its register
             // value is correct and must be preserved.
             if output == Some(tidx) {
@@ -876,9 +874,7 @@ pub fn regalloc_and_codegen(
                     } else {
                         None
                     };
-                    clobber_caller_saved(
-                        ctx, &mut state, out,
-                    );
+                    clobber_caller_saved(ctx, &mut state, out);
                 }
                 if flags.contains(OpFlags::BB_END) {
                     sync_globals(ctx, backend, buf);
