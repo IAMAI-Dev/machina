@@ -70,6 +70,12 @@ pub struct RiscvCpu {
     /// Runtime MMU state, synced from CSR on satp write.
     pub mmu: super::mmu::Mmu,
 
+    /// Pending memory fault from JIT helper. Non-zero cause
+    /// means a fault occurred; the exec loop must call
+    /// handle_exception after the current TB completes.
+    pub mem_fault_cause: u64,
+    pub mem_fault_tval: u64,
+
     /// Pointer to the machine's AddressSpace for MMIO
     /// dispatch from JIT helpers. Cast from *const
     /// AddressSpace. Zero means not initialized.
@@ -155,6 +161,8 @@ impl RiscvCpu {
             csr: CsrFile::new(),
             pmp: super::pmp::Pmp::new(),
             mmu: super::mmu::Mmu::new(),
+            mem_fault_cause: 0,
+            mem_fault_tval: 0,
             as_ptr: 0,
             ram_end: 0,
         }

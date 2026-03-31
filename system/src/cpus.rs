@@ -226,6 +226,19 @@ impl GuestCpu for FullSystemCpu {
         !self.stop_flag.load(Ordering::Relaxed)
     }
 
+    fn check_mem_fault(&mut self) -> bool {
+        let cause = self.cpu.mem_fault_cause;
+        if cause != 0 {
+            let tval = self.cpu.mem_fault_tval;
+            self.cpu.mem_fault_cause = 0;
+            self.cpu.mem_fault_tval = 0;
+            self.handle_exception(cause as u32, tval);
+            true
+        } else {
+            false
+        }
+    }
+
     fn wait_for_interrupt(&self) -> bool {
         self.wfi_waker.wait()
     }
@@ -356,27 +369,44 @@ fn ram_end_offset() -> usize {
     field - base
 }
 
-/// Read from env to get a reference to the full RiscvCpu.
-unsafe fn cpu_from_env(env: *mut u8) -> &'static RiscvCpu {
-    &*(env as *const RiscvCpu)
-}
-
-/// Perform PMP check for non-M-mode access. Returns true
-/// if access is permitted.
+/// PMP check for read. On deny, latches a LoadAccessFault
+/// into the CPU fault registers and returns false.
 unsafe fn pmp_check_read(env: *mut u8, addr: u64, size: u32) -> bool {
-    let cpu = cpu_from_env(env);
+    let cpu = &mut *(env as *mut RiscvCpu);
     use machina_guest_riscv::riscv::mmu::AccessType;
-    cpu.pmp
-        .check_access(addr, size as u64, AccessType::Read, cpu.priv_level)
-        .is_ok()
+    match cpu.pmp.check_access(
+        addr,
+        size as u64,
+        AccessType::Read,
+        cpu.priv_level,
+    ) {
+        Ok(()) => true,
+        Err(_) => {
+            // Latch fault for exec loop to deliver.
+            cpu.mem_fault_cause = 5; // LoadAccessFault
+            cpu.mem_fault_tval = addr;
+            false
+        }
+    }
 }
 
+/// PMP check for write. On deny, latches StoreAccessFault.
 unsafe fn pmp_check_write(env: *mut u8, addr: u64, size: u32) -> bool {
-    let cpu = cpu_from_env(env);
+    let cpu = &mut *(env as *mut RiscvCpu);
     use machina_guest_riscv::riscv::mmu::AccessType;
-    cpu.pmp
-        .check_access(addr, size as u64, AccessType::Write, cpu.priv_level)
-        .is_ok()
+    match cpu.pmp.check_access(
+        addr,
+        size as u64,
+        AccessType::Write,
+        cpu.priv_level,
+    ) {
+        Ok(()) => true,
+        Err(_) => {
+            cpu.mem_fault_cause = 7; // StoreAccessFault
+            cpu.mem_fault_tval = addr;
+            false
+        }
+    }
 }
 
 /// # Safety

@@ -191,6 +191,9 @@ where
             cpu.handle_interrupt();
         }
 
+        // Deliver latched memory faults from JIT helpers.
+        cpu.check_mem_fault();
+
         // External stop check (SiFive Test shutdown, etc).
         if cpu.should_exit() {
             return ExitReason::Halted;

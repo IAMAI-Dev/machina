@@ -53,6 +53,12 @@ pub trait GuestCpu {
         false
     }
 
+    /// Check and deliver any pending memory fault latched
+    /// by JIT helpers. Returns true if a fault was handled.
+    fn check_mem_fault(&mut self) -> bool {
+        false
+    }
+
     /// Wait for an interrupt to arrive (WFI semantics).
     /// Returns true if an interrupt arrived, false if
     /// timed out or not implemented.
