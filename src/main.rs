@@ -11,8 +11,9 @@ use machina_accel::x86_64::emitter::MmioConfig;
 use machina_accel::X86_64CodeGen;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
+use machina_hw_riscv::sifive_test::ShutdownReason;
 use machina_system::cpus::{
-    machina_mem_read, machina_mem_write, FullSystemCpu,
+    machina_mem_read, machina_mem_write, FullSystemCpu, LAST_TB_PC,
 };
 use machina_system::CpuManager;
 
@@ -111,7 +112,7 @@ fn install_crash_handler() {
 }
 
 extern "C" fn crash_handler(_sig: libc::c_int) {
-    let pc = machina_system::cpus::LAST_TB_PC.load(Ordering::Relaxed);
+    let pc = LAST_TB_PC.load(Ordering::Relaxed);
     eprintln!(
         "\nmachina: SIGSEGV in JIT code, \
          last TB pc={:#x}",
@@ -120,40 +121,16 @@ extern "C" fn crash_handler(_sig: libc::c_int) {
     std::process::exit(139);
 }
 
-fn main() {
-    install_crash_handler();
-    let cli = match parse_args() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("machina: {}", e);
-            usage();
-            process::exit(1);
-        }
-    };
-
-    if cli.machine == "?" {
-        eprintln!("Available machines:");
-        eprintln!("  riscv64-ref    RISC-V reference machine");
-        process::exit(0);
-    }
-    if cli.machine != "riscv64-ref" {
-        eprintln!("machina: unknown machine: {}", cli.machine);
-        process::exit(1);
-    }
-
+/// Run one machine cycle: init, boot, execute.
+/// Returns the ShutdownReason if SiFive Test triggered,
+/// or None if execution ended without shutdown device.
+fn run_machine_cycle(
+    opts: &MachineOpts,
+    ram_size: u64,
+) -> Option<ShutdownReason> {
     let mut machine = RefMachine::new();
 
-    let ram_size = cli.ram_mib * 1024 * 1024;
-    let opts = MachineOpts {
-        ram_size,
-        cpu_count: 1,
-        kernel: cli.kernel.clone(),
-        bios: cli.bios.clone(),
-        append: None,
-        nographic: cli.nographic,
-    };
-
-    if let Err(e) = machine.init(&opts) {
+    if let Err(e) = machine.init(opts) {
         eprintln!("machina: init failed: {}", e);
         process::exit(1);
     }
@@ -162,12 +139,6 @@ fn main() {
         eprintln!("machina: boot failed: {}", e);
         process::exit(1);
     }
-
-    eprintln!(
-        "machina: {} booted, {} MiB RAM",
-        machine.name(),
-        cli.ram_mib
-    );
 
     // JIT backend with MMIO helpers.
     let mut backend = X86_64CodeGen::new();
@@ -180,7 +151,6 @@ fn main() {
     let env = ExecEnv::new(backend);
     let shared = env.shared.clone();
 
-    // Take CPU0 from machine for execution.
     let shared_mip = machine.shared_mip();
     let cpu0 = machine.take_cpu(0).expect("cpu0 must exist after boot");
 
@@ -207,7 +177,6 @@ fn main() {
     cpu_mgr.add_cpu(fs_cpu);
 
     // Wire SiFive Test to execution control.
-    use machina_hw_riscv::sifive_test::ShutdownReason;
     let shutdown_reason: Arc<std::sync::Mutex<Option<ShutdownReason>>> =
         Arc::new(std::sync::Mutex::new(None));
     {
@@ -223,27 +192,67 @@ fn main() {
             }));
     }
 
-    eprintln!("machina: entering execution loop");
-
     let _exit = unsafe { cpu_mgr.run(&shared) };
 
-    let code = match *shutdown_reason.lock().unwrap() {
-        Some(ShutdownReason::Pass) => {
-            eprintln!("machina: shutdown (pass)");
-            0
-        }
-        Some(ShutdownReason::Reset) => {
-            eprintln!("machina: reset requested");
-            3
-        }
-        Some(ShutdownReason::Fail(c)) => {
-            eprintln!("machina: fail (code {:#x})", c);
-            1
-        }
-        None => {
-            eprintln!("machina: execution exited");
-            0
+    let result = shutdown_reason.lock().unwrap().take();
+    result
+}
+
+fn main() {
+    install_crash_handler();
+    let cli = match parse_args() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("machina: {}", e);
+            usage();
+            process::exit(1);
         }
     };
-    process::exit(code);
+
+    if cli.machine == "?" {
+        eprintln!("Available machines:");
+        eprintln!("  riscv64-ref    RISC-V reference machine");
+        process::exit(0);
+    }
+    if cli.machine != "riscv64-ref" {
+        eprintln!("machina: unknown machine: {}", cli.machine);
+        process::exit(1);
+    }
+
+    let ram_size = cli.ram_mib * 1024 * 1024;
+    let opts = MachineOpts {
+        ram_size,
+        cpu_count: 1,
+        kernel: cli.kernel.clone(),
+        bios: cli.bios.clone(),
+        append: None,
+        nographic: cli.nographic,
+    };
+
+    eprintln!("machina: riscv64-ref, {} MiB RAM", cli.ram_mib,);
+
+    // Outer loop: supports machine reset via SiFive Test.
+    loop {
+        eprintln!("machina: entering execution loop");
+        let reason = run_machine_cycle(&opts, ram_size);
+
+        match reason {
+            Some(ShutdownReason::Pass) => {
+                eprintln!("machina: shutdown (pass)");
+                process::exit(0);
+            }
+            Some(ShutdownReason::Reset) => {
+                eprintln!("machina: reset, rebooting...");
+                // Loop continues: re-init + re-boot.
+            }
+            Some(ShutdownReason::Fail(code)) => {
+                eprintln!("machina: fail (code {:#x})", code);
+                process::exit(1);
+            }
+            None => {
+                eprintln!("machina: execution exited");
+                process::exit(0);
+            }
+        }
+    }
 }

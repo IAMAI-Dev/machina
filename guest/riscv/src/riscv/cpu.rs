@@ -64,6 +64,10 @@ pub struct RiscvCpu {
     /// Full CSR register file (M/S/U).
     pub csr: CsrFile,
 
+    /// Runtime PMP state, synced from CSR on pmpcfg/
+    /// pmpaddr writes.
+    pub pmp: super::pmp::Pmp,
+
     /// Pointer to the machine's AddressSpace for MMIO
     /// dispatch from JIT helpers. Cast from *const
     /// AddressSpace. Zero means not initialized.
@@ -147,6 +151,7 @@ impl RiscvCpu {
             halted: AtomicBool::new(false),
             priv_level: PrivLevel::Machine,
             csr: CsrFile::new(),
+            pmp: super::pmp::Pmp::new(),
             as_ptr: 0,
             ram_end: 0,
         }

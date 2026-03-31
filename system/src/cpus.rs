@@ -297,11 +297,25 @@ impl GuestCpu for FullSystemCpu {
             return false;
         }
 
+        // Sync PMP runtime state after PMP CSR writes.
+        if do_write {
+            use machina_guest_riscv::riscv::csr::{
+                CSR_PMPADDR0, CSR_PMPCFG0, PMP_COUNT,
+            };
+            let is_pmp = (CSR_PMPCFG0..=CSR_PMPCFG0 + 3).contains(&csr_addr)
+                || (CSR_PMPADDR0..CSR_PMPADDR0 + PMP_COUNT as u16)
+                    .contains(&csr_addr);
+            if is_pmp {
+                self.cpu
+                    .pmp
+                    .sync_from_csr(&self.cpu.csr.pmpcfg, &self.cpu.csr.pmpaddr);
+            }
+        }
+
         if rd != 0 {
             self.cpu.gpr[rd] = old;
         }
 
-        // Advance PC past the CSR instruction (4 bytes).
         self.cpu.pc += 4;
         true
     }

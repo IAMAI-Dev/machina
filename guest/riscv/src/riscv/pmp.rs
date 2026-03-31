@@ -95,6 +95,24 @@ impl Pmp {
         self.entries[idx].addr
     }
 
+    /// Sync PMP entries from the CSR file's pmpcfg/pmpaddr
+    /// arrays. Called after any PMP CSR write.
+    pub fn sync_from_csr(
+        &mut self,
+        pmpcfg: &[u64; 4],
+        pmpaddr: &[u64; super::csr::PMP_COUNT],
+    ) {
+        for (i, (entry, &addr)) in
+            self.entries.iter_mut().zip(pmpaddr.iter()).enumerate()
+        {
+            let cfg_idx = i / 8;
+            let cfg_shift = (i % 8) * 8;
+            let raw = if cfg_idx < 2 { pmpcfg[cfg_idx] } else { 0 };
+            entry.cfg = ((raw >> cfg_shift) & 0xFF) as u8;
+            entry.addr = addr;
+        }
+    }
+
     /// Check whether a memory access is permitted.
     ///
     /// `addr` and `size` describe the byte range being accessed.
