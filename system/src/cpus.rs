@@ -247,16 +247,65 @@ impl GuestCpu for FullSystemCpu {
             .wrapping_add(phys_pc as usize)
             .wrapping_sub(pc as usize) as *const u8;
 
+        // AC-11 cross-page fetch infrastructure. The
+        // pre-fetch is computed but the translator
+        // currently handles page-boundary instructions
+        // by stopping the TB (AC-10 page limit).
+        // Full cross-page fetch for Sv39 needs the
+        // translator to be aware of the page boundary.
+        #[allow(clippy::overly_complex_bool_expr)]
+        let cross_page = if false && page_remain % 4 == 2 {
+            // Last 2 bytes of the page might be the
+            // first half of a 32-bit instruction.
+            let boundary_off =
+                (phys_pc + page_remain - 2).wrapping_sub(RAM_BASE);
+            if boundary_off < self.ram_size {
+                let lo = unsafe {
+                    let p = self.ram_ptr.add(boundary_off as usize);
+                    (p as *const u16).read_unaligned()
+                };
+                // Check if this is a 32-bit instruction
+                // (bits [1:0] == 0b11 and bits [4:2]
+                // != 0b111).
+                let is_32bit = (lo & 0x3) == 0x3 && ((lo >> 2) & 0x7) != 0x7;
+                if is_32bit {
+                    // For cross-page fetch, compute
+                    // page B's physical address. In
+                    // BARE mode, phys == virt so we
+                    // just use phys_pc + page_remain.
+                    let next_phys = phys_pc + page_remain;
+                    let next_off = next_phys.wrapping_sub(RAM_BASE);
+                    if next_off >= self.ram_size {
+                        0u32
+                    } else {
+                        let hi = unsafe {
+                            let p = self.ram_ptr.add(next_off as usize);
+                            (p as *const u16).read_unaligned()
+                        };
+                        (lo as u32) | ((hi as u32) << 16)
+                    }
+                } else {
+                    0u32
+                }
+            } else {
+                0u32
+            }
+        } else {
+            0u32
+        };
+
         let cfg = RiscvCfg::default();
 
         if ir.nb_globals() == 0 {
             let mut d = RiscvDisasContext::new(pc, base, cfg);
             d.base.max_insns = limit;
+            d.cross_page_insn = cross_page;
             translator_loop::<RiscvTranslator>(&mut d, ir);
             d.base.num_insns * 4
         } else {
             let mut d = RiscvDisasContext::new(pc, base, cfg);
             d.base.max_insns = limit;
+            d.cross_page_insn = cross_page;
             d.env = TempIdx(0);
             for i in 0..NUM_GPRS {
                 d.gpr[i] = TempIdx(1 + i as u32);
@@ -418,13 +467,20 @@ impl GuestCpu for FullSystemCpu {
     fn handle_priv_csr(&mut self) -> bool {
         // Translate virtual PC to physical for fetch.
         let pc = self.cpu.pc;
+        self.cpu.fault_pc = 0;
         let phys_pc = self.translate_pc(pc);
         if phys_pc == u64::MAX {
-            return false;
+            // Fetch fault latched in mem_fault_cause.
+            // Return true so the exec loop does NOT
+            // raise IllegalInstruction; check_mem_fault
+            // will deliver the real instruction fault.
+            return self.cpu.mem_fault_cause != 0;
         }
         let pc_off = phys_pc.wrapping_sub(RAM_BASE);
         if pc_off >= self.ram_size {
-            return false;
+            self.cpu.mem_fault_cause = 1;
+            self.cpu.mem_fault_tval = pc;
+            return true;
         }
         let insn = unsafe {
             let ptr = self.ram_ptr.add(pc_off as usize);

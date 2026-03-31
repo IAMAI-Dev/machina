@@ -103,6 +103,8 @@ pub struct TlbEntry {
     /// for fence.i invalidation.
     pub dirty: u8,
     // -- Internal fields (not accessed by JIT) --
+    /// Physical page number for fence.i dirty tracking.
+    phys_page: u64,
     perm: u8,
     asid: u16,
     page_size: u64,
@@ -128,6 +130,7 @@ impl Default for TlbEntry {
             addr_code: TLB_INVALID_TAG,
             addend: 0,
             dirty: 0,
+            phys_page: 0,
             perm: 0,
             asid: 0,
             page_size: 0,
@@ -402,6 +405,7 @@ impl Mmu {
         // Addend will be set by the caller (fill_addend)
         // after checking RAM vs MMIO. Default to 0.
         entry.addend = 0;
+        entry.phys_page = pa >> 12;
         entry.perm = updated_perm;
         entry.asid = asid;
         entry.page_size = pg_size;
@@ -430,6 +434,7 @@ impl Mmu {
         entry.addr_write = tag;
         entry.addr_code = tag;
         entry.addend = addend;
+        entry.phys_page = gva >> 12; // identity: VA == PA
         entry.perm = PTE_R | PTE_W | PTE_X | PTE_A | PTE_D;
         entry.asid = 0;
         entry.page_size = PAGE_SIZE;
@@ -584,17 +589,8 @@ impl Mmu {
                 entry.dirty = 0;
                 // Compute phys page from the entry's
                 // write tag + addend.
-                if entry.addr_write != TLB_INVALID_TAG
-                    && entry.addend != TLB_MMIO_ADDEND
-                {
-                    // The write tag is the VA page.
-                    // phys_page is not directly stored,
-                    // but for fence.i we use the VA page
-                    // which maps 1:1 to phys in most
-                    // cases. For Sv39, the TB's phys_pc
-                    // is used for matching.
-                    let va_page = entry.addr_write >> 12;
-                    pages.push(va_page);
+                if entry.phys_page != 0 && entry.addend != TLB_MMIO_ADDEND {
+                    pages.push(entry.phys_page);
                 }
             }
         }

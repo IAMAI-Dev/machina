@@ -40,6 +40,11 @@ pub struct RiscvDisasContext {
     /// IR temp for the fault PC field (global). Written
     /// before each memory op for precise mepc.
     pub fault_pc: TempIdx,
+    /// Pre-fetched cross-page 32-bit instruction (if
+    /// the instruction spans two physical pages). When
+    /// non-zero, fetch_insn32 returns this instead of
+    /// reading from guest_base.
+    pub cross_page_insn: u32,
     /// Raw instruction word being decoded.
     pub opcode: u32,
     /// Length of the current instruction (2 or 4).
@@ -68,6 +73,7 @@ impl RiscvDisasContext {
             load_res: TempIdx(0),
             load_val: TempIdx(0),
             fault_pc: TempIdx(0),
+            cross_page_insn: 0,
             opcode: 0,
             cur_insn_len: 4,
             guest_base,
@@ -90,6 +96,9 @@ impl RiscvDisasContext {
     /// `guest_base + pc_next` must be a valid, readable
     /// 4-byte aligned host address.
     unsafe fn fetch_insn32(&self) -> u32 {
+        if self.cross_page_insn != 0 {
+            return self.cross_page_insn;
+        }
         let ptr = self.guest_base.add(self.base.pc_next as usize) as *const u32;
         ptr.read_unaligned()
     }
