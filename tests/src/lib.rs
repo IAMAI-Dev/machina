@@ -13,4 +13,6 @@ mod integration;
 #[cfg(test)]
 mod softmmu;
 #[cfg(test)]
+mod softmmu_exec;
+#[cfg(test)]
 mod tools;

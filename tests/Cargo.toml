@@ -7,4 +7,7 @@ edition = "2021"
 machina-accel = { path = "../accel" }
 machina-guest-riscv = { path = "../guest/riscv" }
 machina-decode = { path = "../decode" }
+machina-system = { path = "../system" }
+machina-memory = { path = "../memory" }
+machina-core = { path = "../core" }
 libc = "0.2"
