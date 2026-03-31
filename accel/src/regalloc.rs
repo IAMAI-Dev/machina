@@ -209,6 +209,27 @@ fn temp_sync(
     }
 }
 
+/// Mark all globals in caller-saved registers as
+/// needing reload from memory. Call after CALL_CLOBBER
+/// ops whose inline code may clobber host registers.
+/// Only affects globals — local temps are left alone
+/// since regalloc_op manages their allocation.
+fn clobber_caller_saved(ctx: &mut Context, state: &mut RegAllocState) {
+    const CALLER_SAVED: [u8; 9] = [0, 1, 2, 6, 7, 8, 9, 10, 11];
+    for &reg in &CALLER_SAVED {
+        if let Some(tidx) = state.reg_to_temp[reg as usize] {
+            let temp = ctx.temp(tidx);
+            if temp.is_global_or_fixed() {
+                let t = ctx.temp_mut(tidx);
+                t.val_type = TempVal::Mem;
+                t.reg = None;
+                t.mem_coherent = true;
+                state.free_reg(reg);
+            }
+        }
+    }
+}
+
 /// Sync all live globals back to memory.
 fn sync_globals(
     ctx: &mut Context,
@@ -829,8 +850,20 @@ pub fn regalloc_and_codegen(
             }
 
             _ => {
+                // CALL_CLOBBER ops (QemuLd/QemuSt) may
+                // take a slow path that calls a helper.
+                // Sync globals before so the helper sees
+                // current CPU state, then clobber
+                // caller-saved regs after so stale
+                // values are not reused.
+                if flags.contains(OpFlags::CALL_CLOBBER) {
+                    sync_globals(ctx, backend, buf);
+                }
                 let ct = backend.op_constraint(op.opc);
                 regalloc_op(ctx, &mut state, backend, buf, &op, ct);
+                if flags.contains(OpFlags::CALL_CLOBBER) {
+                    clobber_caller_saved(ctx, &mut state);
+                }
                 if flags.contains(OpFlags::BB_END) {
                     sync_globals(ctx, backend, buf);
                 }
