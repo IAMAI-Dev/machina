@@ -193,7 +193,7 @@ fn test_bare_mode_translate_identity() {
     let mut mmu = Mmu::new();
     // BARE mode: satp=0, translate is identity.
     let mem_read = |_pa: u64| -> u64 { 0 };
-    let mut mem_write = |_pa: u64, _val: u64| {};
+    let mem_write = |_pa: u64, _val: u64| {};
     let result = mmu.translate(
         0x8000_1234,
         AccessType::Read,
@@ -210,8 +210,6 @@ fn test_bare_mode_translate_identity() {
 // ── AC-9: Boot smoke via SiFive test ─────────────────
 // (Covered by tools::sifive_test_pass_clean_exit and
 // tools::boot_rustsbi_with_sbi_smoke_payload)
-
-// ── Multiple TLB index hash values ──────────────────
 
 // ── AC-2: Fetch from unmapped page → fault ───────────
 
@@ -356,5 +354,207 @@ fn test_tlb_index_distinct_pages() {
         i1 != i2 || i2 != i3 || i1 != i3,
         "all three indices are identical: {}",
         i1,
+    );
+}
+
+// ── Behavior-level: Sv39 page table tests ────────────
+
+/// Build a minimal Sv39 gigapage mapping va → pa with
+/// given PTE flags. Returns (buffer, root_ppn).
+fn build_sv39_gigapage(va: u64, pa_ppn: u64, flags: u8) -> (Vec<u64>, u64) {
+    let root_ppn: u64 = 0x1000;
+    let root_base = root_ppn * 4096;
+    let vpn2 = (va >> 30) & 0x1FF;
+    let pte = (pa_ppn << 10) | (flags as u64);
+    let buf_words = ((root_base + (vpn2 + 1) * 8) / 8 + 1) as usize;
+    let mut buf = vec![0u64; buf_words];
+    let idx = ((root_base + vpn2 * 8) / 8) as usize;
+    if idx < buf.len() {
+        buf[idx] = pte;
+    }
+    (buf, root_ppn)
+}
+
+/// Sv39 translate succeeds with valid gigapage.
+#[test]
+fn test_sv39_gigapage_translate() {
+    let va = 0xC000_1234u64;
+    // V|R|W|X|U|A|D = 0xFF
+    let (buf, root_ppn) = build_sv39_gigapage(va, 0x80000, 0xFF);
+    let mut mmu = sv39_mmu(root_ppn);
+    let mem_read = |pa: u64| -> u64 {
+        let idx = (pa / 8) as usize;
+        if idx < buf.len() {
+            buf[idx]
+        } else {
+            0
+        }
+    };
+    let mem_write = |_pa: u64, _val: u64| {};
+    let result = mmu.translate(
+        va,
+        AccessType::Read,
+        PrivLevel::User,
+        0,
+        8,
+        None,
+        mem_read,
+        mem_write,
+    );
+    assert!(result.is_ok(), "got {:?}", result);
+    let pa = result.unwrap();
+    let expected = (0x80000u64 << 12) | (va & 0x3FFF_FFFF);
+    assert_eq!(pa, expected);
+}
+
+/// TLB hit on second access to same gigapage.
+#[test]
+fn test_sv39_tlb_hit_second_access() {
+    let va = 0xC000_0000u64;
+    let (buf, root_ppn) = build_sv39_gigapage(va, 0x80000, 0xFF);
+    let mut mmu = sv39_mmu(root_ppn);
+    let mem_read = |pa: u64| -> u64 {
+        let idx = (pa / 8) as usize;
+        if idx < buf.len() {
+            buf[idx]
+        } else {
+            0
+        }
+    };
+    let mut mem_write = |_pa: u64, _val: u64| {};
+    let _ = mmu.translate(
+        va,
+        AccessType::Read,
+        PrivLevel::User,
+        0,
+        8,
+        None,
+        &mem_read,
+        &mut mem_write,
+    );
+    let misses = mmu.stats().tlb_misses;
+    let _ = mmu.translate(
+        va + 8,
+        AccessType::Read,
+        PrivLevel::User,
+        0,
+        8,
+        None,
+        &mem_read,
+        &mut mem_write,
+    );
+    assert_eq!(
+        mmu.stats().tlb_misses,
+        misses,
+        "second access should TLB hit",
+    );
+}
+
+/// sfence.vma evicts TLB entry forcing re-walk.
+#[test]
+fn test_sfence_vma_forces_rewalk() {
+    let va = 0xC000_0000u64;
+    let (buf, root_ppn) = build_sv39_gigapage(va, 0x80000, 0xFF);
+    let mut mmu = sv39_mmu(root_ppn);
+    let mem_read = |pa: u64| -> u64 {
+        let idx = (pa / 8) as usize;
+        if idx < buf.len() {
+            buf[idx]
+        } else {
+            0
+        }
+    };
+    let mut mem_write = |_pa: u64, _val: u64| {};
+    let _ = mmu.translate(
+        va,
+        AccessType::Read,
+        PrivLevel::User,
+        0,
+        8,
+        None,
+        &mem_read,
+        &mut mem_write,
+    );
+    assert!(mmu.tlb_lookup_read(va).is_some());
+    mmu.flush();
+    assert!(mmu.tlb_lookup_read(va).is_none());
+    // Translate again: should re-walk.
+    let misses_before = mmu.stats().tlb_misses;
+    let _ = mmu.translate(
+        va,
+        AccessType::Read,
+        PrivLevel::User,
+        0,
+        8,
+        None,
+        &mem_read,
+        &mut mem_write,
+    );
+    assert!(
+        mmu.stats().tlb_misses > misses_before,
+        "sfence.vma should force re-walk",
+    );
+}
+
+/// MMIO sentinel prevents fast-path and forces
+/// slow-path dispatch.
+#[test]
+fn test_mmio_sentinel_forces_slow_path() {
+    let mut mmu = Mmu::new();
+    let mmio = 0x1000_0000u64;
+    mmu.fill_identity(mmio, TLB_MMIO_ADDEND);
+    // All three lookups should return None (sentinel).
+    assert!(mmu.tlb_lookup_read(mmio).is_none());
+    assert!(mmu.tlb_lookup_write(mmio).is_none());
+    assert!(mmu.tlb_lookup_code(mmio).is_none());
+}
+
+/// Sv39 write without D bit → TLB miss on write.
+#[test]
+fn test_sv39_write_without_dirty_bit() {
+    use machina_guest_riscv::riscv::exception::Exception;
+    let va = 0xC000_0000u64;
+    // R|W|X|U|A but NOT D (0b0111_1111 & ~D = 0x7F
+    // minus D=0x80 → 0x7F)
+    let (buf, root_ppn) = build_sv39_gigapage(va, 0x80000, 0x7F);
+    let mut mmu = sv39_mmu(root_ppn);
+    let mem_read = |pa: u64| -> u64 {
+        let idx = (pa / 8) as usize;
+        if idx < buf.len() {
+            buf[idx]
+        } else {
+            0
+        }
+    };
+    let mut mem_write = |_pa: u64, _val: u64| {};
+    // First read should succeed.
+    let r = mmu.translate(
+        va,
+        AccessType::Read,
+        PrivLevel::User,
+        0,
+        8,
+        None,
+        &mem_read,
+        &mut mem_write,
+    );
+    assert!(r.is_ok());
+    // Write should still succeed because translate_miss
+    // handles A/D bit setting.
+    let w = mmu.translate(
+        va,
+        AccessType::Write,
+        PrivLevel::User,
+        0,
+        8,
+        None,
+        &mem_read,
+        &mut mem_write,
+    );
+    assert!(
+        w.is_ok(),
+        "write with A/D hardware update should \
+         succeed, got {:?}",
+        w,
     );
 }

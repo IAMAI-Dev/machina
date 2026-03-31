@@ -292,6 +292,10 @@ impl GuestCpu for FullSystemCpu {
                         self.cpu.fault_pc = sfp;
                         let next_off = next_phys.wrapping_sub(RAM_BASE);
                         if next_off >= self.ram_size {
+                            // Page B outside RAM: latch
+                            // InstructionAccessFault.
+                            self.cpu.mem_fault_cause = 1;
+                            self.cpu.mem_fault_tval = pc + page_remain;
                             0u32
                         } else {
                             let hi = unsafe {
