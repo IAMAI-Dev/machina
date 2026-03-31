@@ -205,10 +205,7 @@ impl RiscvDisasContext {
     /// Emit a TB exit for privileged CSR access.
     /// PC is synced to the current instruction so the
     /// exec loop can re-decode and execute at runtime.
-    pub(super) fn gen_priv_csr_exit(
-        &mut self,
-        ir: &mut Context,
-    ) {
+    pub(super) fn gen_priv_csr_exit(&mut self, ir: &mut Context) {
         use machina_accel::ir::tb::EXCP_PRIV_CSR;
         let cur_pc = self.base.pc_next;
         let pc = ir.new_const(Type::I64, cur_pc);

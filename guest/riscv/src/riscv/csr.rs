@@ -281,18 +281,12 @@ impl CsrFile {
             CSR_MCOUNTINHIBIT => Ok(self.mcountinhibit),
 
             // PMP config (RV64: pmpcfg0 and pmpcfg2 only)
-            addr if addr == CSR_PMPCFG0
-                || addr == CSR_PMPCFG2 =>
-            {
+            addr if addr == CSR_PMPCFG0 || addr == CSR_PMPCFG2 => {
                 let idx = ((addr - CSR_PMPCFG0) / 2) as usize;
                 Ok(self.pmpcfg[idx])
             }
             // pmpcfg1/pmpcfg3 don't exist in RV64.
-            addr if addr == CSR_PMPCFG0 + 1
-                || addr == CSR_PMPCFG0 + 3 =>
-            {
-                Ok(0)
-            }
+            addr if addr == CSR_PMPCFG0 + 1 || addr == CSR_PMPCFG0 + 3 => Ok(0),
             // PMP address registers
             addr if addr >= CSR_PMPADDR0
                 && addr < CSR_PMPADDR0 + PMP_COUNT as u16 =>
@@ -390,8 +384,7 @@ impl CsrFile {
                 Ok(())
             }
             CSR_MIP => {
-                self.mip =
-                    (self.mip & !SIP_MASK) | (val & SIP_MASK);
+                self.mip = (self.mip & !SIP_MASK) | (val & SIP_MASK);
                 Ok(())
             }
             CSR_MENVCFG => {
@@ -403,24 +396,18 @@ impl CsrFile {
                 Ok(())
             }
             // PMP config (RV64: pmpcfg0 and pmpcfg2)
-            addr if addr == CSR_PMPCFG0
-                || addr == CSR_PMPCFG2 =>
-            {
-                let idx =
-                    ((addr - CSR_PMPCFG0) / 2) as usize;
+            addr if addr == CSR_PMPCFG0 || addr == CSR_PMPCFG2 => {
+                let idx = ((addr - CSR_PMPCFG0) / 2) as usize;
                 self.pmpcfg[idx] = val;
                 Ok(())
             }
             // pmpcfg1/pmpcfg3: ignored in RV64.
-            addr if addr == CSR_PMPCFG0 + 1
-                || addr == CSR_PMPCFG0 + 3 =>
-            {
+            addr if addr == CSR_PMPCFG0 + 1 || addr == CSR_PMPCFG0 + 3 => {
                 Ok(())
             }
             // PMP address registers
             addr if addr >= CSR_PMPADDR0
-                && addr
-                    < CSR_PMPADDR0 + PMP_COUNT as u16 =>
+                && addr < CSR_PMPADDR0 + PMP_COUNT as u16 =>
             {
                 let idx = (addr - CSR_PMPADDR0) as usize;
                 self.pmpaddr[idx] = val;

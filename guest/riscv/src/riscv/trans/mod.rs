@@ -14,8 +14,7 @@ use super::RiscvDisasContext;
 use crate::DisasJumpType;
 use machina_accel::ir::context::Context;
 use machina_accel::ir::tb::{
-    EXCP_EBREAK, EXCP_ECALL, EXCP_MRET,
-    EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI,
+    EXCP_EBREAK, EXCP_ECALL, EXCP_MRET, EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI,
     TB_EXIT_IDX0, TB_EXIT_NOCHAIN,
 };
 use machina_accel::ir::types::{Cond, MemOp, Type};
@@ -215,23 +214,14 @@ impl Decode<Context> for RiscvDisasContext {
 
     // ── RV32I: Fence / System ──────────────────────────
 
-    fn trans_fence(
-        &mut self,
-        _ir: &mut Context,
-        _a: &ArgsAutoFence,
-    ) -> bool {
+    fn trans_fence(&mut self, _ir: &mut Context, _a: &ArgsAutoFence) -> bool {
         true // NOP
     }
 
-    fn trans_fence_i(
-        &mut self,
-        ir: &mut Context,
-        _a: &ArgsEmpty,
-    ) -> bool {
+    fn trans_fence_i(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
         // Exit TB so the JIT cache is implicitly
         // invalidated (new TBs will be translated fresh).
-        let next =
-            self.base.pc_next + self.cur_insn_len as u64;
+        let next = self.base.pc_next + self.cur_insn_len as u64;
         let pc = ir.new_const(Type::I64, next);
         ir.gen_mov(Type::I64, self.pc, pc);
         ir.gen_exit_tb(EXCP_SFENCE_VMA);
@@ -542,11 +532,7 @@ impl Decode<Context> for RiscvDisasContext {
 
     // ── Zicsr: CSR access ─────────────────────────────
 
-    fn trans_csrrw(
-        &mut self,
-        ir: &mut Context,
-        a: &ArgsCsr,
-    ) -> bool {
+    fn trans_csrrw(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
         require_cfg!(self, ext_zicsr);
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
@@ -564,11 +550,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    fn trans_csrrs(
-        &mut self,
-        ir: &mut Context,
-        a: &ArgsCsr,
-    ) -> bool {
+    fn trans_csrrs(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
         require_cfg!(self, ext_zicsr);
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
@@ -590,11 +572,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    fn trans_csrrc(
-        &mut self,
-        ir: &mut Context,
-        a: &ArgsCsr,
-    ) -> bool {
+    fn trans_csrrc(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
         require_cfg!(self, ext_zicsr);
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
@@ -618,11 +596,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    fn trans_csrrwi(
-        &mut self,
-        ir: &mut Context,
-        a: &ArgsCsr,
-    ) -> bool {
+    fn trans_csrrwi(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
         require_cfg!(self, ext_zicsr);
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
@@ -631,8 +605,7 @@ impl Decode<Context> for RiscvDisasContext {
                 return true;
             }
         };
-        let zimm =
-            ir.new_const(Type::I64, a.rs1 as u64);
+        let zimm = ir.new_const(Type::I64, a.rs1 as u64);
         if !self.gen_csr_write(ir, a.csr, zimm) {
             self.gen_priv_csr_exit(ir);
             return true;
@@ -641,11 +614,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    fn trans_csrrsi(
-        &mut self,
-        ir: &mut Context,
-        a: &ArgsCsr,
-    ) -> bool {
+    fn trans_csrrsi(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
         require_cfg!(self, ext_zicsr);
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
@@ -655,8 +624,7 @@ impl Decode<Context> for RiscvDisasContext {
             }
         };
         if a.rs1 != 0 {
-            let zimm =
-                ir.new_const(Type::I64, a.rs1 as u64);
+            let zimm = ir.new_const(Type::I64, a.rs1 as u64);
             let new = ir.new_temp(Type::I64);
             ir.gen_or(Type::I64, new, old, zimm);
             if !self.gen_csr_write(ir, a.csr, new) {
@@ -668,11 +636,7 @@ impl Decode<Context> for RiscvDisasContext {
         true
     }
 
-    fn trans_csrrci(
-        &mut self,
-        ir: &mut Context,
-        a: &ArgsCsr,
-    ) -> bool {
+    fn trans_csrrci(&mut self, ir: &mut Context, a: &ArgsCsr) -> bool {
         require_cfg!(self, ext_zicsr);
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
@@ -682,8 +646,7 @@ impl Decode<Context> for RiscvDisasContext {
             }
         };
         if a.rs1 != 0 {
-            let zimm =
-                ir.new_const(Type::I64, a.rs1 as u64);
+            let zimm = ir.new_const(Type::I64, a.rs1 as u64);
             let inv = ir.new_temp(Type::I64);
             ir.gen_not(Type::I64, inv, zimm);
             let new = ir.new_temp(Type::I64);
