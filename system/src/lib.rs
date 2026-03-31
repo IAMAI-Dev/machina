@@ -58,10 +58,7 @@ impl CpuManager {
     /// # Safety
     /// Each CPU's `env_ptr()` must return a valid pointer
     /// to its RiscvCpu struct matching translation globals.
-    pub unsafe fn run<B>(
-        &mut self,
-        shared: &SharedState<B>,
-    ) -> ExitReason
+    pub unsafe fn run<B>(&mut self, shared: &SharedState<B>) -> ExitReason
     where
         B: HostCodeGen,
     {
@@ -72,9 +69,7 @@ impl CpuManager {
         let cpu = &mut self.cpus[0];
         let mut per_cpu = PerCpuState::new();
         loop {
-            let r = cpu_exec_loop(
-                shared, &mut per_cpu, cpu,
-            );
+            let r = cpu_exec_loop(shared, &mut per_cpu, cpu);
             match r {
                 ExitReason::Halted => {
                     if !running.load(Ordering::SeqCst) {

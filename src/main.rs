@@ -3,6 +3,8 @@
 use std::env;
 use std::path::PathBuf;
 use std::process;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use machina_accel::exec::ExecEnv;
 use machina_accel::x86_64::emitter::MmioConfig;
@@ -170,6 +172,10 @@ fn main() {
     let as_ptr = machine.address_space()
         as *const machina_memory::address_space::AddressSpace;
 
+    let mut cpu_mgr = CpuManager::new();
+    cpu_mgr.set_wfi_waker(wfi_waker.clone());
+
+    let stop_flag = cpu_mgr.running_flag();
     let fs_cpu = unsafe {
         FullSystemCpu::new(
             cpu0,
@@ -178,26 +184,21 @@ fn main() {
             shared_mip,
             wfi_waker.clone(),
             as_ptr,
+            Arc::clone(&stop_flag),
         )
     };
-
-    let mut cpu_mgr = CpuManager::new();
-    cpu_mgr.set_wfi_waker(wfi_waker.clone());
     cpu_mgr.add_cpu(fs_cpu);
 
-    // Wire SiFive Test shutdown to CpuManager::stop().
+    // Wire SiFive Test shutdown to stop_flag + waker.
     {
-        let running = cpu_mgr.running_flag();
+        let flag = Arc::clone(&stop_flag);
         let wk = wfi_waker;
-        machine.sifive_test().set_shutdown_handler(
-            Box::new(move |_reason| {
-                running.store(
-                    false,
-                    std::sync::atomic::Ordering::SeqCst,
-                );
+        machine
+            .sifive_test()
+            .set_shutdown_handler(Box::new(move |_reason| {
+                flag.store(false, Ordering::SeqCst);
                 wk.stop();
-            }),
-        );
+            }));
     }
 
     eprintln!("machina: entering execution loop");

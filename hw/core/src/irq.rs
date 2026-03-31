@@ -8,6 +8,7 @@ pub trait IrqSink: Send + Sync {
 }
 
 /// A single interrupt wire connecting a source to a sink.
+#[derive(Clone)]
 pub struct IrqLine {
     sink: Arc<dyn IrqSink>,
     irq: u32,

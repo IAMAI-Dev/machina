@@ -47,6 +47,12 @@ pub trait GuestCpu {
         false
     }
 
+    /// Check whether the execution loop should exit.
+    /// Called after each TB to allow external stop.
+    fn should_exit(&self) -> bool {
+        false
+    }
+
     /// Wait for an interrupt to arrive (WFI semantics).
     /// Returns true if an interrupt arrived, false if
     /// timed out or not implemented.

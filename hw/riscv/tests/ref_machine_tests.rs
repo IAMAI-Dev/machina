@@ -2,7 +2,6 @@ use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_guest_riscv::riscv::csr::PrivLevel;
 use machina_hw_riscv::ref_machine::{RefMachine, RAM_BASE};
-use machina_hw_riscv::sbi::{SbiHandler, SBI_EXT_BASE, SBI_EXT_TIMER};
 
 fn default_opts() -> MachineOpts {
     MachineOpts {
@@ -106,20 +105,23 @@ fn test_ref_machine_zero_ram_fails() {
 }
 
 #[test]
-fn test_ref_machine_boot_no_bios() {
+fn test_ref_machine_boot_bios_none() {
     let mut m = RefMachine::new();
-    m.init(&default_opts()).expect("init failed");
-
-    // Boot with no bios/kernel (default -bios none path).
+    // Explicitly set -bios none for bare-metal.
+    let opts = MachineOpts {
+        bios: Some("none".into()),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
     m.boot().expect("boot failed");
 
-    // CPU0 should be in Machine mode at RAM_BASE.
     let cpus = m.cpus_lock();
     let cpu = cpus[0].as_ref().unwrap();
     assert_eq!(cpu.pc, RAM_BASE);
     assert_eq!(cpu.priv_level, PrivLevel::Machine);
-    // a0 = hart_id = 0.
-    assert_eq!(cpu.gpr[10], 0);
+    assert_eq!(cpu.gpr[10], 0); // a0 = hart_id
+                                // a2 = 0 (no DynamicInfo in bare-metal mode).
+    assert_eq!(cpu.gpr[12], 0);
 }
 
 // ---- New tests ----
@@ -201,59 +203,18 @@ fn test_ref_machine_irq_wiring() {
 #[test]
 fn test_ref_machine_boot_cpu_state() {
     let mut m = RefMachine::new();
-    m.init(&default_opts()).expect("init failed");
+    let opts = MachineOpts {
+        bios: Some("none".into()),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
     m.boot().expect("boot failed");
 
     let cpus = m.cpus_lock();
     let cpu = cpus[0].as_ref().unwrap();
-    // a0 = hart_id = 0.
-    assert_eq!(cpu.gpr[10], 0);
-    // a1 = fdt_addr, must be within RAM.
-    assert!(
-        cpu.gpr[11] >= RAM_BASE,
-        "fdt_addr below RAM_BASE"
-    );
-    // PC = RAM_BASE (no bios → bare metal entry).
+    assert_eq!(cpu.gpr[10], 0); // a0 = hart_id
+    assert!(cpu.gpr[11] >= RAM_BASE, "fdt_addr below RAM_BASE");
     assert_eq!(cpu.pc, RAM_BASE);
-}
-
-#[test]
-fn test_sbi_base_extension() {
-    let args = [0u64; 6];
-
-    // func 0: spec version = 2 (SBI 0.2).
-    let r = SbiHandler::handle_ecall(SBI_EXT_BASE, 0, &args);
-    assert_eq!(r.error, 0);
-    assert_eq!(r.value, 2);
-
-    // func 1: impl id = 0 (machina).
-    let r = SbiHandler::handle_ecall(SBI_EXT_BASE, 1, &args);
-    assert_eq!(r.error, 0);
-    assert_eq!(r.value, 0);
-
-    // func 2: impl version = 1.
-    let r = SbiHandler::handle_ecall(SBI_EXT_BASE, 2, &args);
-    assert_eq!(r.error, 0);
-    assert_eq!(r.value, 1);
-
-    // func 3: probe extension = 0 (not available).
-    let r = SbiHandler::handle_ecall(SBI_EXT_BASE, 3, &args);
-    assert_eq!(r.error, 0);
-    assert_eq!(r.value, 0);
-}
-
-#[test]
-fn test_sbi_unsupported_extension() {
-    let args = [0u64; 6];
-
-    // Timer extension not implemented → not_supported.
-    let r = SbiHandler::handle_ecall(SBI_EXT_TIMER, 0, &args);
-    assert_eq!(r.error, -2, "should return SBI_ERR_NOT_SUPPORTED");
-    assert_eq!(r.value, 0);
-
-    // Completely unknown extension.
-    let r = SbiHandler::handle_ecall(0xDEAD, 0, &args);
-    assert_eq!(r.error, -2, "unknown ext → not supported");
 }
 
 #[test]
@@ -324,19 +285,18 @@ fn test_uart_rx_irq_to_plic() {
 #[test]
 fn test_boot_sets_cpu_state() {
     let mut m = RefMachine::new();
-    m.init(&default_opts()).expect("init failed");
-
-    // Write a small BIOS stub into RAM directly, then boot.
-    let bios = [0x13u8; 16]; // NOP sled
-    m.write_ram(0, &bios).expect("write_ram failed");
-
+    let opts = MachineOpts {
+        bios: Some("none".into()),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
     m.boot().expect("boot failed");
 
     let cpus = m.cpus_lock();
     let cpu = cpus[0].as_ref().unwrap();
-    assert_eq!(cpu.gpr[10], 0, "a0 should be hart_id=0");
-    assert!(cpu.gpr[11] >= RAM_BASE, "a1 should be fdt_addr within RAM");
-    assert_eq!(cpu.pc, RAM_BASE, "pc should be RAM_BASE");
+    assert_eq!(cpu.gpr[10], 0, "a0 = hart_id=0");
+    assert!(cpu.gpr[11] >= RAM_BASE, "a1 = fdt_addr within RAM");
+    assert_eq!(cpu.pc, RAM_BASE, "pc = RAM_BASE");
     assert_eq!(
         cpu.priv_level,
         PrivLevel::Machine,
@@ -347,9 +307,11 @@ fn test_boot_sets_cpu_state() {
 #[test]
 fn test_take_cpu_preserves_boot_state() {
     let mut m = RefMachine::new();
-    m.init(&default_opts()).expect("init failed");
-    let bios = [0x13u8; 16];
-    m.write_ram(0, &bios).expect("write_ram failed");
+    let opts = MachineOpts {
+        bios: Some("none".into()),
+        ..default_opts()
+    };
+    m.init(&opts).expect("init failed");
     m.boot().expect("boot failed");
 
     // take_cpu returns CPU with boot state intact.

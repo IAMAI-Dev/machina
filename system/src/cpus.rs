@@ -5,7 +5,7 @@
 // AtomicU64, which the exec loop polls via
 // pending_interrupt().
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use machina_core::wfi::WfiWaker;
@@ -37,6 +37,7 @@ pub struct FullSystemCpu {
     ram_size: u64,
     shared_mip: SharedMip,
     wfi_waker: Arc<WfiWaker>,
+    stop_flag: Arc<AtomicBool>,
 }
 
 // SAFETY: ram_ptr points to mmap'd memory owned by
@@ -58,6 +59,7 @@ impl FullSystemCpu {
         shared_mip: SharedMip,
         wfi_waker: Arc<WfiWaker>,
         as_ptr: *const machina_memory::address_space::AddressSpace,
+        stop_flag: Arc<AtomicBool>,
     ) -> Self {
         cpu.guest_base =
             (ram_ptr as usize).wrapping_sub(RAM_BASE as usize) as u64;
@@ -69,6 +71,7 @@ impl FullSystemCpu {
             ram_size,
             shared_mip,
             wfi_waker,
+            stop_flag,
         }
     }
 
@@ -203,6 +206,10 @@ impl GuestCpu for FullSystemCpu {
 
     fn tlb_flush_page(&mut self, _vpn: u64) {}
 
+    fn should_exit(&self) -> bool {
+        !self.stop_flag.load(Ordering::Relaxed)
+    }
+
     fn wait_for_interrupt(&self) -> bool {
         self.wfi_waker.wait()
     }
@@ -238,23 +245,23 @@ impl GuestCpu for FullSystemCpu {
             // Immediate forms: rs1 field is the zimm.
             rs1_idx as u64
         } else {
-            if rs1_idx == 0 { 0 } else { self.cpu.gpr[rs1_idx] }
+            if rs1_idx == 0 {
+                0
+            } else {
+                self.cpu.gpr[rs1_idx]
+            }
         };
 
-        let old = match self
-            .cpu
-            .csr
-            .read(csr_addr, priv_level)
-        {
+        let old = match self.cpu.csr.read(csr_addr, priv_level) {
             Ok(v) => v,
             Err(_) => return false,
         };
 
         // Compute new value based on funct3.
         let new_val = match funct3 {
-            1 | 5 => rs1_val,            // CSRRW / CSRRWI
-            2 | 6 => old | rs1_val,      // CSRRS / CSRRSI
-            3 | 7 => old & !rs1_val,     // CSRRC / CSRRCI
+            1 | 5 => rs1_val,        // CSRRW / CSRRWI
+            2 | 6 => old | rs1_val,  // CSRRS / CSRRSI
+            3 | 7 => old & !rs1_val, // CSRRC / CSRRCI
             _ => return false,
         };
 
@@ -267,12 +274,7 @@ impl GuestCpu for FullSystemCpu {
         };
 
         if do_write {
-            if self
-                .cpu
-                .csr
-                .write(csr_addr, new_val, priv_level)
-                .is_err()
-            {
+            if self.cpu.csr.write(csr_addr, new_val, priv_level).is_err() {
                 return false;
             }
         }

@@ -13,7 +13,7 @@
 #   - nightly Rust toolchain (for rustsbi build)
 
 RUSTSBI_DIR = rustsbi/prototyper
-TARGET = riscv64imac-unknown-none-elf
+TARGET = riscv64gc-unknown-none-elf
 PROFILE = release
 OUT_DIR = ../pc-bios
 
@@ -27,6 +27,7 @@ all: fw_dynamic fw_jump
 
 # Default build (no features) = fw_dynamic mode.
 fw_dynamic:
+	mkdir -p $(OUT_DIR)
 	cd $(RUSTSBI_DIR) && cargo build \
 		--package rustsbi-prototyper \
 		--release \
@@ -38,6 +39,7 @@ fw_dynamic:
 
 # Jump mode: kernel entry at 0x80200000.
 fw_jump:
+	mkdir -p $(OUT_DIR)
 	cd $(RUSTSBI_DIR) && cargo build \
 		--package rustsbi-prototyper \
 		--release \

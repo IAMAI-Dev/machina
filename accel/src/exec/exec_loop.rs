@@ -4,10 +4,8 @@ use super::{ExecEnv, PerCpuState, SharedState, MIN_CODE_BUF_REMAINING};
 use crate::cpu::GuestCpu;
 use crate::ir::context::Context;
 use crate::ir::tb::{
-    decode_tb_exit, TranslationBlock, EXCP_ECALL,
-    EXCP_MRET, EXCP_PRIV_CSR, EXCP_SFENCE_VMA,
-    EXCP_SRET, EXCP_WFI, EXIT_TARGET_NONE,
-    TB_EXIT_NOCHAIN,
+    decode_tb_exit, TranslationBlock, EXCP_ECALL, EXCP_MRET, EXCP_PRIV_CSR,
+    EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI, EXIT_TARGET_NONE, TB_EXIT_NOCHAIN,
 };
 use crate::translate::translate;
 use crate::HostCodeGen;
@@ -191,6 +189,11 @@ where
         // Check for pending interrupts after each TB exit.
         if cpu.pending_interrupt() {
             cpu.handle_interrupt();
+        }
+
+        // External stop check (SiFive Test shutdown, etc).
+        if cpu.should_exit() {
+            return ExitReason::Halted;
         }
     }
 }

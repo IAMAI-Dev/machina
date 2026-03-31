@@ -21,9 +21,8 @@ pub const KERNEL_OFFSET: u64 = 0x20_0000;
 /// This is included at compile time from pc-bios/.
 /// When pc-bios/ doesn't exist yet, use an empty slice.
 #[cfg(feature = "embed-firmware")]
-const EMBEDDED_FW: &[u8] = include_bytes!(
-    "../../../pc-bios/rustsbi-riscv64-machina-fw_dynamic.bin"
-);
+const EMBEDDED_FW: &[u8] =
+    include_bytes!("../../../pc-bios/rustsbi-riscv64-machina-fw_dynamic.bin");
 
 #[cfg(not(feature = "embed-firmware"))]
 const EMBEDDED_FW: &[u8] = &[];
@@ -57,24 +56,12 @@ impl DynamicInfo {
 
     pub fn to_bytes(&self) -> [u8; 48] {
         let mut buf = [0u8; 48];
-        buf[0..8].copy_from_slice(
-            &self.magic.to_le_bytes(),
-        );
-        buf[8..16].copy_from_slice(
-            &self.version.to_le_bytes(),
-        );
-        buf[16..24].copy_from_slice(
-            &self.next_addr.to_le_bytes(),
-        );
-        buf[24..32].copy_from_slice(
-            &self.next_mode.to_le_bytes(),
-        );
-        buf[32..40].copy_from_slice(
-            &self.options.to_le_bytes(),
-        );
-        buf[40..48].copy_from_slice(
-            &self.boot_hart.to_le_bytes(),
-        );
+        buf[0..8].copy_from_slice(&self.magic.to_le_bytes());
+        buf[8..16].copy_from_slice(&self.version.to_le_bytes());
+        buf[16..24].copy_from_slice(&self.next_addr.to_le_bytes());
+        buf[24..32].copy_from_slice(&self.next_mode.to_le_bytes());
+        buf[32..40].copy_from_slice(&self.options.to_le_bytes());
+        buf[40..48].copy_from_slice(&self.boot_hart.to_le_bytes());
         buf
     }
 }
@@ -97,9 +84,7 @@ enum BiosSource<'a> {
     Embedded,
 }
 
-fn resolve_bios(
-    bios_path: &Option<std::path::PathBuf>,
-) -> BiosSource<'_> {
+fn resolve_bios(bios_path: &Option<std::path::PathBuf>) -> BiosSource<'_> {
     match bios_path {
         Some(p) => {
             let s = p.to_str().unwrap_or("");
@@ -120,41 +105,26 @@ pub fn boot_ref_machine(
     machine: &mut RefMachine,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let bios_source = resolve_bios(&machine.bios_path);
-    let has_firmware = !matches!(
-        bios_source, BiosSource::None
-    );
+    let has_firmware = !matches!(bios_source, BiosSource::None);
 
     // Load firmware at RAM_BASE.
     match bios_source {
         BiosSource::File(path) => {
             let data = std::fs::read(path)?;
             let as_ = machine.address_space();
-            loader::load_binary(
-                &data, GPA::new(RAM_BASE), as_,
-            )
-            .map_err(|e| -> Box<dyn std::error::Error> {
-                e.into()
-            })?;
+            loader::load_binary(&data, GPA::new(RAM_BASE), as_)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         }
         BiosSource::Embedded => {
             if EMBEDDED_FW.is_empty() {
-                eprintln!(
-                    "machina: no embedded firmware \
-                     (build with embed-firmware feature)"
-                );
-            } else {
-                let as_ = machine.address_space();
-                loader::load_binary(
-                    EMBEDDED_FW,
-                    GPA::new(RAM_BASE),
-                    as_,
-                )
-                .map_err(
-                    |e| -> Box<dyn std::error::Error> {
-                        e.into()
-                    },
-                )?;
+                return Err("no embedded firmware available; \
+                     use -bios <path> or build with \
+                     embed-firmware feature"
+                    .into());
             }
+            let as_ = machine.address_space();
+            loader::load_binary(EMBEDDED_FW, GPA::new(RAM_BASE), as_)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         }
         BiosSource::None => {}
     }
@@ -163,14 +133,8 @@ pub fn boot_ref_machine(
     if let Some(ref kernel_path) = machine.kernel_path {
         let data = std::fs::read(kernel_path)?;
         let as_ = machine.address_space();
-        loader::load_binary(
-            &data,
-            GPA::new(RAM_BASE + KERNEL_OFFSET),
-            as_,
-        )
-        .map_err(|e| -> Box<dyn std::error::Error> {
-            e.into()
-        })?;
+        loader::load_binary(&data, GPA::new(RAM_BASE + KERNEL_OFFSET), as_)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     }
 
     // Place FDT at top of RAM, aligned to 8 bytes.
@@ -178,41 +142,29 @@ pub fn boot_ref_machine(
     let fdt_len = fdt.len() as u64;
     let ram_size = machine.ram_size();
     if fdt_len > ram_size {
-        return Err(
-            "FDT blob larger than available RAM".into()
-        );
+        return Err("FDT blob larger than available RAM".into());
     }
     let fdt_offset = (ram_size - fdt_len) & !0x7;
     let fdt_addr = RAM_BASE + fdt_offset;
     let as_ = machine.address_space();
     loader::load_binary(&fdt, GPA::new(fdt_addr), as_)
-        .map_err(|e| -> Box<dyn std::error::Error> {
-            e.into()
-        })?;
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // Place DynamicInfo before FDT (8-byte aligned).
     let mut dynamic_info_addr: u64 = 0;
     if has_firmware {
-        let kernel_addr = if machine.kernel_path.is_some()
-        {
+        let kernel_addr = if machine.kernel_path.is_some() {
             RAM_BASE + KERNEL_OFFSET
         } else {
             RAM_BASE + KERNEL_OFFSET // default
         };
         let info = DynamicInfo::new(kernel_addr);
         let info_bytes = info.to_bytes();
-        let info_offset =
-            (fdt_offset - info_bytes.len() as u64) & !0x7;
+        let info_offset = (fdt_offset - info_bytes.len() as u64) & !0x7;
         dynamic_info_addr = RAM_BASE + info_offset;
         let as_ = machine.address_space();
-        loader::load_binary(
-            &info_bytes,
-            GPA::new(dynamic_info_addr),
-            as_,
-        )
-        .map_err(|e| -> Box<dyn std::error::Error> {
-            e.into()
-        })?;
+        loader::load_binary(&info_bytes, GPA::new(dynamic_info_addr), as_)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     }
 
     // Set CPU0 boot state.
