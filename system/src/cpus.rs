@@ -44,6 +44,15 @@ pub fn tlb_ptr_offset() -> usize {
 pub use machina_guest_riscv::riscv::mmu::tlb_offsets;
 pub use machina_guest_riscv::riscv::mmu::TLB_SIZE;
 
+/// Compute the byte offset of `mem_fault_cause` within
+/// RiscvCpu. Used by the JIT to check for helper faults.
+pub fn fault_cause_offset() -> usize {
+    let dummy = RiscvCpu::new();
+    let base = &dummy as *const RiscvCpu as usize;
+    let field = &dummy.mem_fault_cause as *const u64 as usize;
+    field - base
+}
+
 /// Last translated TB PC for crash diagnosis.
 pub static LAST_TB_PC: AtomicU64 = AtomicU64::new(0);
 
@@ -584,7 +593,7 @@ unsafe fn read_phys_sized(cpu: *const RiscvCpu, pa: u64, size: u32) -> u64 {
             8 => *(ptr as *const u64),
             _ => 0,
         }
-    } else if pa < 0x1_0000_0000 {
+    } else {
         let asp = cpu_ref.as_ptr;
         if asp != 0 {
             let as_ = &*(asp as *const AddressSpace);
@@ -592,8 +601,6 @@ unsafe fn read_phys_sized(cpu: *const RiscvCpu, pa: u64, size: u32) -> u64 {
         } else {
             0
         }
-    } else {
-        0
     }
 }
 
@@ -611,17 +618,13 @@ unsafe fn write_phys_sized(cpu: *mut RiscvCpu, pa: u64, val: u64, size: u32) {
             8 => *(ptr as *mut u64) = val,
             _ => {}
         }
-    } else if pa < 0x1_0000_0000 {
-        // Reasonable MMIO range: route through
-        // AddressSpace.
+    } else {
         let asp = cpu_ref.as_ptr;
         if asp != 0 {
             let as_ = &*(asp as *const AddressSpace);
             as_.write(GPA::new(pa), size, val);
         }
     }
-    // Addresses outside RAM and MMIO range are silently
-    // dropped (e.g., bad PTE address during page walk).
 }
 
 /// Read 8 bytes from guest physical memory (for page

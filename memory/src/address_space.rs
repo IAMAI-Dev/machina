@@ -47,9 +47,10 @@ impl AddressSpace {
             "unsupported read size {size}"
         );
         let fv = self.flat_view.read().unwrap();
-        let fr = fv
-            .lookup(addr)
-            .unwrap_or_else(|| panic!("unmapped read at {addr}"));
+        let fr = match fv.lookup(addr) {
+            Some(fr) => fr,
+            None => return 0, // Unmapped read returns 0.
+        };
 
         let region_off = fr.offset_in_region + (addr.0 - fr.addr.0);
 
@@ -83,9 +84,10 @@ impl AddressSpace {
             "unsupported write size {size}"
         );
         let fv = self.flat_view.read().unwrap();
-        let fr = fv
-            .lookup(addr)
-            .unwrap_or_else(|| panic!("unmapped write at {addr}"));
+        let fr = match fv.lookup(addr) {
+            Some(fr) => fr,
+            None => return, // Silently drop unmapped writes.
+        };
 
         let region_off = fr.offset_in_region + (addr.0 - fr.addr.0);
 

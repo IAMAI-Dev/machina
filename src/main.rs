@@ -142,7 +142,9 @@ fn run_machine_cycle(
 
     // JIT backend with SoftMMU/TLB config.
     let mut backend = X86_64CodeGen::new();
-    use machina_system::cpus::{tlb_offsets, tlb_ptr_offset, TLB_SIZE};
+    use machina_system::cpus::{
+        fault_cause_offset, tlb_offsets, tlb_ptr_offset, TLB_SIZE,
+    };
     backend.mmio = Some(SoftMmuConfig {
         tlb_ptr_offset: tlb_ptr_offset(),
         entry_size: tlb_offsets::ENTRY_SIZE,
@@ -152,6 +154,8 @@ fn run_machine_cycle(
         index_mask: (TLB_SIZE - 1) as u64,
         load_helper: machina_mem_read as *const () as u64,
         store_helper: machina_mem_write as *const () as u64,
+        fault_cause_offset: fault_cause_offset(),
+        tb_ret_addr: 0, // unused, fault exits via epilogue
     });
     let env = ExecEnv::new(backend);
     let shared = env.shared.clone();

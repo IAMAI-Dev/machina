@@ -141,6 +141,7 @@ impl RiscvDisasContext {
         } else {
             base
         };
+        self.sync_pc(ir);
         let val = ir.new_temp(Type::I64);
         ir.gen_qemu_ld(Type::I64, val, addr, memop.bits() as u32);
         if is_single {
@@ -180,6 +181,7 @@ impl RiscvDisasContext {
         } else {
             val
         };
+        self.sync_pc(ir);
         ir.gen_qemu_st(Type::I64, store_val, addr, memop.bits() as u32);
         true
     }
@@ -374,6 +376,14 @@ impl RiscvDisasContext {
         }
     }
 
+    /// Write the current instruction's PC to the env
+    /// `pc` global so that a helper-triggered fault
+    /// has the correct mepc/sepc.
+    fn sync_pc(&self, ir: &mut Context) {
+        let pc_val = ir.new_const(Type::I64, self.base.pc_next);
+        ir.gen_mov(Type::I64, self.pc, pc_val);
+    }
+
     // -- R-type helpers ------------------------------------
 
     // -- Guest memory helpers --------------------------------
@@ -393,6 +403,7 @@ impl RiscvDisasContext {
         } else {
             base
         };
+        self.sync_pc(ir);
         let dst = ir.new_temp(Type::I64);
         ir.gen_qemu_ld(Type::I64, dst, addr, memop.bits() as u32);
         self.gen_set_gpr(ir, a.rd, dst);
@@ -415,6 +426,7 @@ impl RiscvDisasContext {
             base
         };
         let val = self.gpr_or_zero(ir, a.rs2);
+        self.sync_pc(ir);
         ir.gen_qemu_st(Type::I64, val, addr, memop.bits() as u32);
         true
     }
@@ -746,6 +758,7 @@ impl RiscvDisasContext {
         if a.rl != 0 {
             ir.gen_mb(TCG_MO_ALL | TCG_BAR_STRL);
         }
+        self.sync_pc(ir);
         let val = ir.new_temp(Type::I64);
         ir.gen_qemu_ld(Type::I64, val, addr, memop.bits() as u32);
         if a.aq != 0 {
@@ -773,6 +786,7 @@ impl RiscvDisasContext {
 
         // Always succeed: store and set rd = 0.
         let src2 = self.gpr_or_zero(ir, a.rs2);
+        self.sync_pc(ir);
         ir.gen_qemu_st(Type::I64, src2, addr, memop.bits() as u32);
         let zero = ir.new_const(Type::I64, 0);
         self.gen_set_gpr(ir, a.rd, zero);
@@ -796,6 +810,7 @@ impl RiscvDisasContext {
         if a.rl != 0 {
             ir.gen_mb(TCG_MO_ALL | TCG_BAR_STRL);
         }
+        self.sync_pc(ir);
         let old = ir.new_temp(Type::I64);
         ir.gen_qemu_ld(Type::I64, old, addr, memop.bits() as u32);
         let src2 = self.gpr_or_zero(ir, a.rs2);
@@ -820,6 +835,7 @@ impl RiscvDisasContext {
         if a.rl != 0 {
             ir.gen_mb(TCG_MO_ALL | TCG_BAR_STRL);
         }
+        self.sync_pc(ir);
         let old = ir.new_temp(Type::I64);
         ir.gen_qemu_ld(Type::I64, old, addr, memop.bits() as u32);
         let src2 = self.gpr_or_zero(ir, a.rs2);
@@ -843,6 +859,7 @@ impl RiscvDisasContext {
         if a.rl != 0 {
             ir.gen_mb(TCG_MO_ALL | TCG_BAR_STRL);
         }
+        self.sync_pc(ir);
         let old = ir.new_temp(Type::I64);
         ir.gen_qemu_ld(Type::I64, old, addr, memop.bits() as u32);
         let src2 = self.gpr_or_zero(ir, a.rs2);

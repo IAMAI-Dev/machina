@@ -1196,6 +1196,11 @@ pub struct SoftMmuConfig {
     /// Address of the store slow-path helper:
     /// `machina_mem_write(env, gva, val, size)`.
     pub store_helper: u64,
+    /// Offset of `mem_fault_cause` within env (for
+    /// checking after helper returns).
+    pub fault_cause_offset: usize,
+    /// Epilogue offset for exiting TB on helper fault.
+    pub tb_ret_addr: u64,
 }
 
 /// x86-64 backend code generator.
@@ -1315,7 +1320,14 @@ impl X86_64CodeGen {
     ///   mov dst, rax
     /// done:
     /// ```
+    /// Emit QemuLd with inline TLB check and
+    /// post-helper fault exit.
+    ///
+    /// Fast path: TLB tag match → addend → inline load.
+    /// Slow path: call helper → check fault → exit TB
+    /// if faulted.
     pub(crate) fn emit_qemu_ld_mmio(
+        &self,
         buf: &mut CodeBuffer,
         cfg: &SoftMmuConfig,
         rexw: bool,
@@ -1327,41 +1339,118 @@ impl X86_64CodeGen {
         let sign = memop & 4 != 0;
         let size_bytes: u32 = 1 << size;
 
-        // Always call the slow-path helper (TLB inline
-        // check disabled temporarily for debugging).
+        // Save addr to stack (BL-20260331-jit-tlb-scratch-regs).
         emit_store(buf, true, addr, Reg::Rsp, Self::MMIO_SCRATCH);
 
-        Self::emit_save_caller_regs(buf);
+        // -- TLB inline check --
+        // r11 = TLB index = (addr >> 12) & mask
+        emit_mov_rr(buf, true, Reg::R11, addr);
+        emit_shift_ri(buf, ShiftOp::Shr, true, Reg::R11, 12);
+        emit_arith_ri(buf, ArithOp::And, true, Reg::R11, cfg.index_mask as i32);
+        // r10 = TLB base pointer
+        emit_load(buf, true, Reg::R10, Reg::Rbp, cfg.tlb_ptr_offset as i32);
+        // r11 = index * entry_size
+        emit_imul_ri(buf, true, Reg::R11, Reg::R11, cfg.entry_size as i32);
+        // r10 = entry pointer
+        emit_arith_rr(buf, ArithOp::Add, true, Reg::R10, Reg::R11);
+        // r11 = entry.addr_read (tag)
+        emit_load(buf, true, Reg::R11, Reg::R10, cfg.addr_read_off as i32);
+        // Reload addr from stack, compute tag
+        emit_load(buf, true, Reg::Rax, Reg::Rsp, Self::MMIO_SCRATCH);
+        emit_shift_ri(buf, ShiftOp::Shr, true, Reg::Rax, 12);
+        emit_shift_ri(buf, ShiftOp::Shl, true, Reg::Rax, 12);
+        // Tag compare
+        emit_arith_rr(buf, ArithOp::Cmp, true, Reg::R11, Reg::Rax);
+        emit_opc(buf, OPC_JCC_long + (X86Cond::Jne as u32), 0, 0);
+        let jne_off = buf.offset();
+        buf.emit_u32(0);
 
-        // rdi=env, rsi=gva, edx=size
+        // r11 = entry.addend
+        emit_load(buf, true, Reg::R11, Reg::R10, cfg.addend_off as i32);
+        // MMIO sentinel check
+        emit_arith_ri(buf, ArithOp::Cmp, true, Reg::R11, -1i32);
+        emit_opc(buf, OPC_JCC_long + (X86Cond::Je as u32), 0, 0);
+        let je_off = buf.offset();
+        buf.emit_u32(0);
+
+        // -- Fast path: host_addr = addr + addend --
+        emit_load(buf, true, Reg::Rax, Reg::Rsp, Self::MMIO_SCRATCH);
+        emit_arith_rr(buf, ArithOp::Add, true, Reg::Rax, Reg::R11);
+        // Inline load from [rax]
+        match (size, sign) {
+            (0, false) => {
+                emit_load_zx(buf, OPC_MOVZBL, dst, Reg::Rax, 0);
+            }
+            (0, true) => {
+                let o = if rexw {
+                    OPC_MOVSBL | P_REXW
+                } else {
+                    OPC_MOVSBL
+                };
+                emit_load_sx(buf, o, dst, Reg::Rax, 0);
+            }
+            (1, false) => {
+                emit_load_zx(buf, OPC_MOVZWL, dst, Reg::Rax, 0);
+            }
+            (1, true) => {
+                let o = if rexw {
+                    OPC_MOVSWL | P_REXW
+                } else {
+                    OPC_MOVSWL
+                };
+                emit_load_sx(buf, o, dst, Reg::Rax, 0);
+            }
+            (2, false) => {
+                emit_load(buf, false, dst, Reg::Rax, 0);
+            }
+            (2, true) => {
+                emit_load_sx(buf, OPC_MOVSLQ, dst, Reg::Rax, 0);
+            }
+            (3, _) => {
+                emit_load(buf, true, dst, Reg::Rax, 0);
+            }
+            _ => unreachable!(),
+        }
+        // Skip slow path
+        buf.emit_u8(OPC_JMP_long as u8);
+        let jmp_done = buf.offset();
+        buf.emit_u32(0);
+
+        // -- Slow path --
+        let slow = buf.offset();
+        Self::patch_disp(buf, jne_off, slow);
+        Self::patch_disp(buf, je_off, slow);
+
+        Self::emit_save_caller_regs(buf);
         emit_mov_rr(buf, true, Reg::Rdi, Reg::Rbp);
         emit_load(buf, true, Reg::Rsi, Reg::Rsp, Self::MMIO_SCRATCH);
         emit_mov_ri(buf, false, Reg::Rdx, size_bytes as u64);
-
         emit_mov_ri(buf, true, Reg::R11, cfg.load_helper);
         emit_call_reg(buf, Reg::R11);
 
+        // Save result, restore regs, load result.
         emit_store(buf, true, Reg::Rax, Reg::Rsp, Self::MMIO_SCRATCH);
         Self::emit_restore_caller_regs(buf);
         emit_load(buf, true, dst, Reg::Rsp, Self::MMIO_SCRATCH);
 
+        // Sign-extend if needed
         if sign {
             match size {
                 0 => {
-                    let opc = if rexw {
+                    let o = if rexw {
                         OPC_MOVSBL | P_REXW
                     } else {
                         OPC_MOVSBL
                     };
-                    emit_movsx(buf, opc, dst, dst);
+                    emit_movsx(buf, o, dst, dst);
                 }
                 1 => {
-                    let opc = if rexw {
+                    let o = if rexw {
                         OPC_MOVSWL | P_REXW
                     } else {
                         OPC_MOVSWL
                     };
-                    emit_movsx(buf, opc, dst, dst);
+                    emit_movsx(buf, o, dst, dst);
                 }
                 2 => {
                     emit_movsx(buf, OPC_MOVSLQ, dst, dst);
@@ -1369,13 +1458,18 @@ impl X86_64CodeGen {
                 _ => {}
             }
         }
+
+        // Check mem_fault_cause after helper.
+        self.emit_fault_check(buf, cfg);
+
+        // done:
+        Self::patch_disp(buf, jmp_done, buf.offset());
     }
 
-    /// Emit QemuSt with inline TLB check.
-    ///
-    /// Layout mirrors `emit_qemu_ld_mmio` with addr_write
-    /// tag check.
+    /// Emit QemuSt with inline TLB check and
+    /// post-helper fault exit.
     pub(crate) fn emit_qemu_st_mmio(
+        &self,
         buf: &mut CodeBuffer,
         cfg: &SoftMmuConfig,
         val: Reg,
@@ -1385,23 +1479,97 @@ impl X86_64CodeGen {
         let size = memop & 0x3;
         let size_bytes: u32 = 1 << size;
 
-        // Always call the slow-path helper (TLB inline
-        // check disabled temporarily for debugging).
+        // Save addr and val to stack.
         emit_store(buf, true, addr, Reg::Rsp, Self::MMIO_SCRATCH);
         emit_store(buf, true, val, Reg::Rsp, Self::MMIO_SCRATCH + 8);
 
-        Self::emit_save_caller_regs(buf);
+        // -- TLB inline check --
+        emit_mov_rr(buf, true, Reg::R11, addr);
+        emit_shift_ri(buf, ShiftOp::Shr, true, Reg::R11, 12);
+        emit_arith_ri(buf, ArithOp::And, true, Reg::R11, cfg.index_mask as i32);
+        emit_load(buf, true, Reg::R10, Reg::Rbp, cfg.tlb_ptr_offset as i32);
+        emit_imul_ri(buf, true, Reg::R11, Reg::R11, cfg.entry_size as i32);
+        emit_arith_rr(buf, ArithOp::Add, true, Reg::R10, Reg::R11);
+        // r11 = entry.addr_write (tag)
+        emit_load(buf, true, Reg::R11, Reg::R10, cfg.addr_write_off as i32);
+        // Reload addr, compute tag
+        emit_load(buf, true, Reg::Rax, Reg::Rsp, Self::MMIO_SCRATCH);
+        emit_shift_ri(buf, ShiftOp::Shr, true, Reg::Rax, 12);
+        emit_shift_ri(buf, ShiftOp::Shl, true, Reg::Rax, 12);
+        emit_arith_rr(buf, ArithOp::Cmp, true, Reg::R11, Reg::Rax);
+        emit_opc(buf, OPC_JCC_long + (X86Cond::Jne as u32), 0, 0);
+        let jne_off = buf.offset();
+        buf.emit_u32(0);
 
-        // rdi=env, rsi=gva, rdx=val, ecx=size
+        // r11 = entry.addend
+        emit_load(buf, true, Reg::R11, Reg::R10, cfg.addend_off as i32);
+        emit_arith_ri(buf, ArithOp::Cmp, true, Reg::R11, -1i32);
+        emit_opc(buf, OPC_JCC_long + (X86Cond::Je as u32), 0, 0);
+        let je_off = buf.offset();
+        buf.emit_u32(0);
+
+        // -- Fast path: host_addr = addr + addend --
+        emit_load(buf, true, Reg::Rax, Reg::Rsp, Self::MMIO_SCRATCH);
+        emit_arith_rr(buf, ArithOp::Add, true, Reg::Rax, Reg::R11);
+        // Reload val from stack into R11
+        emit_load(buf, true, Reg::R11, Reg::Rsp, Self::MMIO_SCRATCH + 8);
+        // Inline store to [rax]
+        match size {
+            0 => emit_store_byte(buf, Reg::R11, Reg::Rax, 0),
+            1 => emit_store_word(buf, Reg::R11, Reg::Rax, 0),
+            2 => emit_store(buf, false, Reg::R11, Reg::Rax, 0),
+            3 => emit_store(buf, true, Reg::R11, Reg::Rax, 0),
+            _ => unreachable!(),
+        }
+        // Skip slow path
+        buf.emit_u8(OPC_JMP_long as u8);
+        let jmp_done = buf.offset();
+        buf.emit_u32(0);
+
+        // -- Slow path --
+        let slow = buf.offset();
+        Self::patch_disp(buf, jne_off, slow);
+        Self::patch_disp(buf, je_off, slow);
+
+        Self::emit_save_caller_regs(buf);
         emit_mov_rr(buf, true, Reg::Rdi, Reg::Rbp);
         emit_load(buf, true, Reg::Rsi, Reg::Rsp, Self::MMIO_SCRATCH);
         emit_load(buf, true, Reg::Rdx, Reg::Rsp, Self::MMIO_SCRATCH + 8);
         emit_mov_ri(buf, false, Reg::Rcx, size_bytes as u64);
-
         emit_mov_ri(buf, true, Reg::R11, cfg.store_helper);
         emit_call_reg(buf, Reg::R11);
-
         Self::emit_restore_caller_regs(buf);
+
+        // Check mem_fault_cause after helper.
+        self.emit_fault_check(buf, cfg);
+
+        // done:
+        Self::patch_disp(buf, jmp_done, buf.offset());
+    }
+
+    /// Emit a post-helper fault check: if
+    /// mem_fault_cause != 0, exit TB immediately.
+    fn emit_fault_check(&self, buf: &mut CodeBuffer, cfg: &SoftMmuConfig) {
+        // r11 = [rbp + fault_cause_offset]
+        emit_load(buf, true, Reg::R11, Reg::Rbp, cfg.fault_cause_offset as i32);
+        // cmp r11, 0
+        emit_arith_ri(buf, ArithOp::Cmp, true, Reg::R11, 0);
+        // je skip (no fault → continue TB)
+        emit_opc(buf, OPC_JCC_long + (X86Cond::Je as u32), 0, 0);
+        let je_off = buf.offset();
+        buf.emit_u32(0);
+        // Fault: exit TB with NOCHAIN (non-chainable).
+        // The exec loop will call check_mem_fault().
+        emit_mov_ri(buf, true, Reg::Rax, crate::ir::tb::TB_EXIT_NOCHAIN);
+        emit_jmp(buf, self.tb_ret_offset);
+        // skip:
+        Self::patch_disp(buf, je_off, buf.offset());
+    }
+
+    /// Patch a jmp/jcc disp32 field.
+    fn patch_disp(buf: &mut CodeBuffer, disp_off: usize, target: usize) {
+        let d = (target as i64) - (disp_off as i64 + 4);
+        buf.patch_u32(disp_off, d as u32);
     }
 }
 

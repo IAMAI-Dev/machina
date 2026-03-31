@@ -580,9 +580,7 @@ impl HostCodeGen for X86_64CodeGen {
                 let addr = Reg::from_u8(iregs[0]);
                 let memop = cargs[0] as u16;
                 if let Some(ref cfg) = self.mmio {
-                    X86_64CodeGen::emit_qemu_ld_mmio(
-                        buf, cfg, rexw, d, addr, memop,
-                    );
+                    self.emit_qemu_ld_mmio(buf, cfg, rexw, d, addr, memop);
                 } else {
                     let size = memop & 0x3;
                     let sign = memop & 4 != 0;
@@ -631,9 +629,7 @@ impl HostCodeGen for X86_64CodeGen {
                 let addr = Reg::from_u8(iregs[1]);
                 let memop = cargs[0] as u16;
                 if let Some(ref cfg) = self.mmio {
-                    X86_64CodeGen::emit_qemu_st_mmio(
-                        buf, cfg, val, addr, memop,
-                    );
+                    self.emit_qemu_st_mmio(buf, cfg, val, addr, memop);
                 } else {
                     let size = memop & 0x3;
                     let gb = Reg::R14;
