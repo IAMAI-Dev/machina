@@ -403,3 +403,43 @@ fn test_irq_updates_cpu_mip() {
         "MEI should be cleared after IRQ lower"
     );
 }
+
+// ---- SiFive Test regressions ----
+
+#[test]
+fn test_sifive_test_mmio_read_returns_zero() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let as_ = m.address_space();
+    // Read from SiFive Test register @ 0x10_0000.
+    let val = as_.read(GPA::new(0x10_0000), 4);
+    assert_eq!(val, 0, "SiFive Test MMIO read must return 0");
+}
+
+#[test]
+fn test_sifive_test_dtb_has_node() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let fdt = m.fdt_blob();
+    let needle = b"sifive,test0";
+    let found = fdt.windows(needle.len()).any(|w| w == needle);
+    assert!(found, "FDT must contain 'sifive,test0' compatible");
+}
+
+#[test]
+fn test_sifive_test_pass_triggers_shutdown() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+    let st = m.sifive_test().clone();
+    assert!(
+        !st.is_triggered(),
+        "device should not be triggered before write"
+    );
+    let as_ = m.address_space();
+    // Write PASS (0x5555).
+    as_.write(GPA::new(0x10_0000), 4, 0x5555);
+    assert!(
+        st.is_triggered(),
+        "device must be triggered after PASS write"
+    );
+}

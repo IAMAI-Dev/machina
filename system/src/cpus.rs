@@ -297,10 +297,10 @@ impl GuestCpu for FullSystemCpu {
             return false;
         }
 
-        // Sync PMP runtime state after PMP CSR writes.
+        // Sync runtime state after privileged CSR writes.
         if do_write {
             use machina_guest_riscv::riscv::csr::{
-                CSR_PMPADDR0, CSR_PMPCFG0, PMP_COUNT,
+                CSR_PMPADDR0, CSR_PMPCFG0, CSR_SATP, PMP_COUNT,
             };
             let is_pmp = (CSR_PMPCFG0..=CSR_PMPCFG0 + 3).contains(&csr_addr)
                 || (CSR_PMPADDR0..CSR_PMPADDR0 + PMP_COUNT as u16)
@@ -309,6 +309,9 @@ impl GuestCpu for FullSystemCpu {
                 self.cpu
                     .pmp
                     .sync_from_csr(&self.cpu.csr.pmpcfg, &self.cpu.csr.pmpaddr);
+            }
+            if csr_addr == CSR_SATP {
+                self.cpu.mmu.set_satp(new_val);
             }
         }
 
@@ -353,6 +356,29 @@ fn ram_end_offset() -> usize {
     field - base
 }
 
+/// Read from env to get a reference to the full RiscvCpu.
+unsafe fn cpu_from_env(env: *mut u8) -> &'static RiscvCpu {
+    &*(env as *const RiscvCpu)
+}
+
+/// Perform PMP check for non-M-mode access. Returns true
+/// if access is permitted.
+unsafe fn pmp_check_read(env: *mut u8, addr: u64, size: u32) -> bool {
+    let cpu = cpu_from_env(env);
+    use machina_guest_riscv::riscv::mmu::AccessType;
+    cpu.pmp
+        .check_access(addr, size as u64, AccessType::Read, cpu.priv_level)
+        .is_ok()
+}
+
+unsafe fn pmp_check_write(env: *mut u8, addr: u64, size: u32) -> bool {
+    let cpu = cpu_from_env(env);
+    use machina_guest_riscv::riscv::mmu::AccessType;
+    cpu.pmp
+        .check_access(addr, size as u64, AccessType::Write, cpu.priv_level)
+        .is_ok()
+}
+
 /// # Safety
 /// `env` must point to a valid `RiscvCpu` struct with
 /// initialized `as_ptr`, `ram_end`, and `guest_base`.
@@ -362,6 +388,10 @@ pub unsafe extern "C" fn machina_mem_read(
     addr: u64,
     size: u32,
 ) -> u64 {
+    // PMP check for non-M-mode access.
+    if !pmp_check_read(env, addr, size) {
+        return 0; // Access denied — return 0.
+    }
     let end = *(env.add(ram_end_offset()) as *const u64);
     if addr >= RAM_BASE && addr < end {
         let gb_off =
@@ -396,6 +426,9 @@ pub unsafe extern "C" fn machina_mem_write(
     val: u64,
     size: u32,
 ) {
+    if !pmp_check_write(env, addr, size) {
+        return; // Access denied — silently drop.
+    }
     let end = *(env.add(ram_end_offset()) as *const u64);
     if addr >= RAM_BASE && addr < end {
         let gb_off =

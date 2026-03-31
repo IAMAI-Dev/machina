@@ -67,6 +67,8 @@ pub struct RiscvCpu {
     /// Runtime PMP state, synced from CSR on pmpcfg/
     /// pmpaddr writes.
     pub pmp: super::pmp::Pmp,
+    /// Runtime MMU state, synced from CSR on satp write.
+    pub mmu: super::mmu::Mmu,
 
     /// Pointer to the machine's AddressSpace for MMIO
     /// dispatch from JIT helpers. Cast from *const
@@ -152,6 +154,7 @@ impl RiscvCpu {
             priv_level: PrivLevel::Machine,
             csr: CsrFile::new(),
             pmp: super::pmp::Pmp::new(),
+            mmu: super::mmu::Mmu::new(),
             as_ptr: 0,
             ram_end: 0,
         }
