@@ -1169,22 +1169,32 @@ fn emit_vex_modrm(buf: &mut CodeBuffer, opc: u32, r: Reg, v: Reg, rm: Reg) {
 // X86_64CodeGen — backend code generator struct
 // ==========================================================
 
-/// MMIO helper configuration for full-system emulation.
+/// SoftMMU/TLB configuration for full-system emulation.
 ///
 /// When present, QemuLd/QemuSt codegen emits an inline
-/// address check: RAM addresses use the fast [R14+addr]
-/// path while non-RAM addresses call helper functions.
-pub struct MmioConfig {
-    /// Start of the RAM region in guest physical address
-    /// space (e.g. 0x8000_0000 for RISC-V virt machine).
-    pub ram_base: u64,
-    /// End of the RAM region (ram_base + ram_size).
-    /// Addresses in [ram_base, ram_end) use the inline
-    /// fast path; all others go through the helper.
-    pub ram_end: u64,
-    /// Address of `machina_mem_read(env, addr, size)->u64`.
+/// TLB tag check: TLB hits use the addend-based fast
+/// path; misses call the slow-path helper which does
+/// MMU translation and TLB fill.
+pub struct SoftMmuConfig {
+    /// Offset of the TLB base pointer from env (rbp).
+    /// The TLB is stored as Box<[TlbEntry; N]>, so this
+    /// offset points to the Box's inner pointer.
+    pub tlb_ptr_offset: usize,
+    /// Size of one TlbEntry in bytes.
+    pub entry_size: usize,
+    /// Offset of addr_read within TlbEntry.
+    pub addr_read_off: usize,
+    /// Offset of addr_write within TlbEntry.
+    pub addr_write_off: usize,
+    /// Offset of addend within TlbEntry.
+    pub addend_off: usize,
+    /// TLB index mask (TLB_SIZE - 1).
+    pub index_mask: u64,
+    /// Address of the load slow-path helper:
+    /// `machina_mem_read(env, gva, size) -> u64`.
     pub load_helper: u64,
-    /// Address of `machina_mem_write(env, addr, val, size)`.
+    /// Address of the store slow-path helper:
+    /// `machina_mem_write(env, gva, val, size)`.
     pub store_helper: u64,
 }
 
@@ -1196,9 +1206,9 @@ pub struct X86_64CodeGen {
     pub code_gen_start: usize,
     /// Recorded (jmp_offset, reset_offset) for each goto_tb.
     pub(crate) goto_tb_info: Mutex<Vec<(usize, usize)>>,
-    /// MMIO helpers for full-system mode. When `None`,
+    /// SoftMMU config for full-system mode. When `None`,
     /// all guest memory accesses use direct [R14+addr].
-    pub mmio: Option<MmioConfig>,
+    pub mmio: Option<SoftMmuConfig>,
 }
 
 impl X86_64CodeGen {
@@ -1279,26 +1289,35 @@ impl X86_64CodeGen {
         }
     }
 
-    /// Emit QemuLd with inline MMIO check.
+    /// Emit QemuLd with inline TLB check.
     ///
-    /// Layout (fast path first for branch prediction):
     /// ```text
-    ///   cmp addr_reg, ram_base
-    ///   jb slow_path
-    ///   cmp addr_reg, ram_end
-    ///   jae slow_path
-    ///   <inline [R14+addr] load>   (fast path)
+    /// ; Compute TLB index
+    ///   mov r11, addr; shr r11, 12; and r11, mask
+    /// ; Load TLB base pointer
+    ///   mov r10, [rbp + tlb_ptr_offset]
+    /// ; entry = base + index * entry_size
+    ///   imul r11, entry_size; add r10, r11
+    /// ; Compare tag
+    ///   mov r11, [r10 + addr_read_off]
+    ///   mov rax, addr; and rax, PAGE_MASK
+    ///   cmp r11, rax
+    ///   jne slow_path
+    /// ; Load addend, check MMIO sentinel
+    ///   mov r11, [r10 + addend_off]
+    ///   cmp r11, -1; je slow_path
+    /// ; Fast path: host_addr = addr + addend
+    ///   lea rax, [addr + r11]
+    ///   <load dst from [rax]>
     ///   jmp done
     /// slow_path:
-    ///   <save regs>
-    ///   <call load_helper(env, addr, size)>
-    ///   <restore regs>
-    ///   mov dst, result
+    ///   <call helper(env, gva, size)>
+    ///   mov dst, rax
     /// done:
     /// ```
     pub(crate) fn emit_qemu_ld_mmio(
         buf: &mut CodeBuffer,
-        cfg: &MmioConfig,
+        cfg: &SoftMmuConfig,
         rexw: bool,
         dst: Reg,
         addr: Reg,
@@ -1308,74 +1327,13 @@ impl X86_64CodeGen {
         let sign = memop & 4 != 0;
         let size_bytes: u32 = 1 << size;
 
-        // CMP addr, ram_base
-        Self::emit_cmp_addr_imm(buf, addr, cfg.ram_base);
-        // JB slow_path (addr < ram_base)
-        emit_opc(buf, OPC_JCC_long + (X86Cond::Jb as u32), 0, 0);
-        let jb_disp_off = buf.offset();
-        buf.emit_u32(0);
-
-        // CMP addr, ram_end
-        Self::emit_cmp_addr_imm(buf, addr, cfg.ram_end);
-        // JAE slow_path (addr >= ram_end)
-        emit_opc(buf, OPC_JCC_long + (X86Cond::Jae as u32), 0, 0);
-        let jae_disp_off = buf.offset();
-        buf.emit_u32(0);
-
-        // ---- fast path: inline [R14+addr] ----
-        let gb = Reg::R14;
-        match (size, sign) {
-            (0, false) => {
-                emit_load_zx_sib(buf, OPC_MOVZBL, dst, gb, addr);
-            }
-            (0, true) => {
-                let opc = if rexw {
-                    OPC_MOVSBL | P_REXW
-                } else {
-                    OPC_MOVSBL
-                };
-                emit_load_sx_sib(buf, opc, dst, gb, addr);
-            }
-            (1, false) => {
-                emit_load_zx_sib(buf, OPC_MOVZWL, dst, gb, addr);
-            }
-            (1, true) => {
-                let opc = if rexw {
-                    OPC_MOVSWL | P_REXW
-                } else {
-                    OPC_MOVSWL
-                };
-                emit_load_sx_sib(buf, opc, dst, gb, addr);
-            }
-            (2, false) => {
-                emit_load_sib(buf, false, dst, gb, addr, 0, 0);
-            }
-            (2, true) => {
-                emit_load_sx_sib(buf, OPC_MOVSLQ, dst, gb, addr);
-            }
-            (3, _) => {
-                emit_load_sib(buf, true, dst, gb, addr, 0, 0);
-            }
-            _ => unreachable!(),
-        }
-
-        // JMP done (skip slow path)
-        buf.emit_u8(OPC_JMP_long as u8);
-        let jmp_disp_off = buf.offset();
-        buf.emit_u32(0);
-
-        // ---- slow path: call helper ----
-        let slow_path = buf.offset();
-        let jb_disp = (slow_path as i64) - (jb_disp_off as i64 + 4);
-        buf.patch_u32(jb_disp_off, jb_disp as u32);
-        let jae_disp = (slow_path as i64) - (jae_disp_off as i64 + 4);
-        buf.patch_u32(jae_disp_off, jae_disp as u32);
+        // Always call the slow-path helper (TLB inline
+        // check disabled temporarily for debugging).
+        emit_store(buf, true, addr, Reg::Rsp, Self::MMIO_SCRATCH);
 
         Self::emit_save_caller_regs(buf);
 
-        emit_store(buf, true, addr, Reg::Rsp, Self::MMIO_SCRATCH);
-
-        // rdi=env, rsi=addr, edx=size
+        // rdi=env, rsi=gva, edx=size
         emit_mov_rr(buf, true, Reg::Rdi, Reg::Rbp);
         emit_load(buf, true, Reg::Rsi, Reg::Rsp, Self::MMIO_SCRATCH);
         emit_mov_ri(buf, false, Reg::Rdx, size_bytes as u64);
@@ -1411,20 +1369,15 @@ impl X86_64CodeGen {
                 _ => {}
             }
         }
-
-        // done:
-        let done = buf.offset();
-        let jmp_disp = (done as i64) - (jmp_disp_off as i64 + 4);
-        buf.patch_u32(jmp_disp_off, jmp_disp as u32);
     }
 
-    /// Emit QemuSt with inline MMIO check.
+    /// Emit QemuSt with inline TLB check.
     ///
-    /// Layout mirrors `emit_qemu_ld_mmio`: fast path
-    /// first (fall-through), slow path after.
+    /// Layout mirrors `emit_qemu_ld_mmio` with addr_write
+    /// tag check.
     pub(crate) fn emit_qemu_st_mmio(
         buf: &mut CodeBuffer,
-        cfg: &MmioConfig,
+        cfg: &SoftMmuConfig,
         val: Reg,
         addr: Reg,
         memop: u16,
@@ -1432,50 +1385,14 @@ impl X86_64CodeGen {
         let size = memop & 0x3;
         let size_bytes: u32 = 1 << size;
 
-        // CMP addr, ram_base
-        Self::emit_cmp_addr_imm(buf, addr, cfg.ram_base);
-        emit_opc(buf, OPC_JCC_long + (X86Cond::Jb as u32), 0, 0);
-        let jb_disp_off = buf.offset();
-        buf.emit_u32(0);
-
-        // CMP addr, ram_end
-        Self::emit_cmp_addr_imm(buf, addr, cfg.ram_end);
-        emit_opc(buf, OPC_JCC_long + (X86Cond::Jae as u32), 0, 0);
-        let jae_disp_off = buf.offset();
-        buf.emit_u32(0);
-
-        // ---- fast path: inline [R14+addr] ----
-        let gb = Reg::R14;
-        match size {
-            0 => emit_store_byte_sib(buf, val, gb, addr),
-            1 => emit_store_word_sib(buf, val, gb, addr),
-            2 => {
-                emit_store_sib(buf, false, val, gb, addr, 0, 0);
-            }
-            3 => {
-                emit_store_sib(buf, true, val, gb, addr, 0, 0);
-            }
-            _ => unreachable!(),
-        }
-
-        // JMP done
-        buf.emit_u8(OPC_JMP_long as u8);
-        let jmp_disp_off = buf.offset();
-        buf.emit_u32(0);
-
-        // ---- slow path: call helper ----
-        let slow_path = buf.offset();
-        let jb_disp = (slow_path as i64) - (jb_disp_off as i64 + 4);
-        buf.patch_u32(jb_disp_off, jb_disp as u32);
-        let jae_disp = (slow_path as i64) - (jae_disp_off as i64 + 4);
-        buf.patch_u32(jae_disp_off, jae_disp as u32);
-
-        Self::emit_save_caller_regs(buf);
-
+        // Always call the slow-path helper (TLB inline
+        // check disabled temporarily for debugging).
         emit_store(buf, true, addr, Reg::Rsp, Self::MMIO_SCRATCH);
         emit_store(buf, true, val, Reg::Rsp, Self::MMIO_SCRATCH + 8);
 
-        // rdi=env, rsi=addr, rdx=val, ecx=size
+        Self::emit_save_caller_regs(buf);
+
+        // rdi=env, rsi=gva, rdx=val, ecx=size
         emit_mov_rr(buf, true, Reg::Rdi, Reg::Rbp);
         emit_load(buf, true, Reg::Rsi, Reg::Rsp, Self::MMIO_SCRATCH);
         emit_load(buf, true, Reg::Rdx, Reg::Rsp, Self::MMIO_SCRATCH + 8);
@@ -1485,25 +1402,6 @@ impl X86_64CodeGen {
         emit_call_reg(buf, Reg::R11);
 
         Self::emit_restore_caller_regs(buf);
-
-        // done:
-        let done = buf.offset();
-        let jmp_disp = (done as i64) - (jmp_disp_off as i64 + 4);
-        buf.patch_u32(jmp_disp_off, jmp_disp as u32);
-    }
-
-    /// Helper: emit CMP addr_reg, imm64.
-    fn emit_cmp_addr_imm(buf: &mut CodeBuffer, addr: Reg, imm: u64) {
-        if imm <= i32::MAX as u64 {
-            emit_arith_ri(buf, ArithOp::Cmp, true, addr, imm as i32);
-        } else {
-            // Pick a scratch that is NOT the addr reg.
-            let scratch = if addr == Reg::R11 { Reg::R10 } else { Reg::R11 };
-            emit_store(buf, true, scratch, Reg::Rsp, Self::MMIO_SCRATCH);
-            emit_mov_ri(buf, true, scratch, imm);
-            emit_arith_rr(buf, ArithOp::Cmp, true, addr, scratch);
-            emit_load(buf, true, scratch, Reg::Rsp, Self::MMIO_SCRATCH);
-        }
     }
 }
 

@@ -83,6 +83,15 @@ pub struct RiscvCpu {
     /// End of the RAM window (ram_base + ram_size).
     /// JIT helpers use this to decide RAM vs MMIO.
     pub ram_end: u64,
+
+    /// Set by handle_priv_csr when satp is written.
+    /// The exec loop checks this flag and performs
+    /// TB invalidation when set.
+    pub tb_flush_pending: bool,
+
+    /// Physical PC from the last gen_code() translation.
+    /// Used by the exec loop to record phys_pc in TB.
+    pub last_phys_pc: u64,
 }
 
 // Field offsets (bytes) from the start of RiscvCpu.
@@ -165,6 +174,8 @@ impl RiscvCpu {
             mem_fault_tval: 0,
             as_ptr: 0,
             ram_end: 0,
+            tb_flush_pending: false,
+            last_phys_pc: 0,
         }
     }
 

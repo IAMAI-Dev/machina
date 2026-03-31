@@ -4,8 +4,9 @@ use super::{ExecEnv, PerCpuState, SharedState, MIN_CODE_BUF_REMAINING};
 use crate::cpu::GuestCpu;
 use crate::ir::context::Context;
 use crate::ir::tb::{
-    decode_tb_exit, TranslationBlock, EXCP_ECALL, EXCP_MRET, EXCP_PRIV_CSR,
-    EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI, EXIT_TARGET_NONE, TB_EXIT_NOCHAIN,
+    decode_tb_exit, TranslationBlock, EXCP_ECALL, EXCP_FENCE_I, EXCP_MRET,
+    EXCP_PRIV_CSR, EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI, EXIT_TARGET_NONE,
+    TB_EXIT_NOCHAIN,
 };
 use crate::translate::translate;
 use crate::HostCodeGen;
@@ -73,7 +74,13 @@ where
                 let flags = cpu.get_flags();
                 match tb_find(shared, per_cpu, cpu, pc, flags) {
                     Some(idx) => idx,
-                    None => return ExitReason::BufferFull,
+                    None => {
+                        // Might be a fetch fault.
+                        if cpu.check_mem_fault() {
+                            continue;
+                        }
+                        return ExitReason::BufferFull;
+                    }
                 }
             }
         };
@@ -91,7 +98,12 @@ where
                 let flags = cpu.get_flags();
                 let dst = match tb_find(shared, per_cpu, cpu, pc, flags) {
                     Some(idx) => idx,
-                    None => return ExitReason::BufferFull,
+                    None => {
+                        if cpu.check_mem_fault() {
+                            continue;
+                        }
+                        return ExitReason::BufferFull;
+                    }
                 };
 
                 tb_add_jump(shared, per_cpu, src_tb, slot, dst);
@@ -121,7 +133,12 @@ where
 
                 let dst = match tb_find(shared, per_cpu, cpu, pc, flags) {
                     Some(idx) => idx,
-                    None => return ExitReason::BufferFull,
+                    None => {
+                        if cpu.check_mem_fault() {
+                            continue;
+                        }
+                        return ExitReason::BufferFull;
+                    }
                 };
                 let stb = shared.tb_store.get(src_tb);
                 stb.exit_target.store(dst, Ordering::Relaxed);
@@ -140,7 +157,22 @@ where
             v if v == EXCP_SFENCE_VMA as usize => {
                 per_cpu.stats.real_exit += 1;
                 cpu.tlb_flush();
-                // Continue execution after TLB flush.
+                shared
+                    .tb_store
+                    .invalidate_all(shared.code_buf(), &shared.backend);
+                per_cpu.jump_cache.invalidate();
+                next_tb_hint = None;
+            }
+            v if v == EXCP_FENCE_I as usize => {
+                per_cpu.stats.real_exit += 1;
+                // fence.i: invalidate all TBs (conservative
+                // full flush; phys-page granularity added in
+                // task14 after phys_pc is populated).
+                shared
+                    .tb_store
+                    .invalidate_all(shared.code_buf(), &shared.backend);
+                per_cpu.jump_cache.invalidate();
+                next_tb_hint = None;
             }
             v if v == EXCP_WFI as usize => {
                 per_cpu.stats.real_exit += 1;
@@ -169,6 +201,13 @@ where
                 if !cpu.handle_priv_csr() {
                     cpu.handle_exception(2, 0);
                 }
+                if cpu.take_tb_flush_pending() {
+                    shared
+                        .tb_store
+                        .invalidate_all(shared.code_buf(), &shared.backend);
+                    per_cpu.jump_cache.invalidate();
+                    next_tb_hint = None;
+                }
             }
             v if v == EXCP_ECALL as usize => {
                 // The translator emits a unified EXCP_ECALL;
@@ -186,13 +225,15 @@ where
             }
         }
 
+        // Deliver latched memory faults from JIT helpers.
+        // Must precede interrupt check: faults have higher
+        // priority and must be delivered precisely.
+        cpu.check_mem_fault();
+
         // Check for pending interrupts after each TB exit.
         if cpu.pending_interrupt() {
             cpu.handle_interrupt();
         }
-
-        // Deliver latched memory faults from JIT helpers.
-        cpu.check_mem_fault();
 
         // External stop check (SiFive Test shutdown, etc).
         if cpu.should_exit() {
@@ -271,8 +312,20 @@ where
     guard.ir_ctx.tb_idx = tb_idx as u32;
     let guest_size =
         cpu.gen_code(&mut guard.ir_ctx, pc, TranslationBlock::max_insns(0));
+    if guest_size == 0 {
+        // Fetch fault or PC outside RAM. The fault is
+        // latched in mem_fault_cause. Mark TB invalid
+        // so the exec loop re-checks.
+        unsafe {
+            let tb = shared.tb_store.get_mut(tb_idx);
+            tb.invalid.store(true, Ordering::Release);
+        }
+        return None;
+    }
     unsafe {
-        shared.tb_store.get_mut(tb_idx).size = guest_size;
+        let tb = shared.tb_store.get_mut(tb_idx);
+        tb.size = guest_size;
+        tb.phys_pc = cpu.last_phys_pc();
     }
 
     shared.backend.clear_goto_tb_offsets();

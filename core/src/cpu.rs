@@ -59,6 +59,18 @@ pub trait GuestCpu {
         false
     }
 
+    /// Returns true if all TBs should be invalidated
+    /// (e.g. after satp write). Clears the flag.
+    fn take_tb_flush_pending(&mut self) -> bool {
+        false
+    }
+
+    /// Returns the physical PC from the last gen_code()
+    /// call (for TB phys_pc recording).
+    fn last_phys_pc(&self) -> u64 {
+        0
+    }
+
     /// Wait for an interrupt to arrive (WFI semantics).
     /// Returns true if an interrupt arrived, false if
     /// timed out or not implemented.

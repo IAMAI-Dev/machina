@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use machina_accel::exec::ExecEnv;
-use machina_accel::x86_64::emitter::MmioConfig;
+use machina_accel::x86_64::emitter::SoftMmuConfig;
 use machina_accel::X86_64CodeGen;
 use machina_core::machine::{Machine, MachineOpts};
 use machina_hw_riscv::ref_machine::RefMachine;
@@ -140,11 +140,16 @@ fn run_machine_cycle(
         process::exit(1);
     }
 
-    // JIT backend with MMIO helpers.
+    // JIT backend with SoftMMU/TLB config.
     let mut backend = X86_64CodeGen::new();
-    backend.mmio = Some(MmioConfig {
-        ram_base: 0x8000_0000,
-        ram_end: 0x8000_0000 + ram_size,
+    use machina_system::cpus::{tlb_offsets, tlb_ptr_offset, TLB_SIZE};
+    backend.mmio = Some(SoftMmuConfig {
+        tlb_ptr_offset: tlb_ptr_offset(),
+        entry_size: tlb_offsets::ENTRY_SIZE,
+        addr_read_off: tlb_offsets::ADDR_READ,
+        addr_write_off: tlb_offsets::ADDR_WRITE,
+        addend_off: tlb_offsets::ADDEND,
+        index_mask: (TLB_SIZE - 1) as u64,
         load_helper: machina_mem_read as *const () as u64,
         store_helper: machina_mem_write as *const () as u64,
     });

@@ -6,7 +6,7 @@ use crate::code_buffer::CodeBuffer;
 use crate::ir::tb::{TranslationBlock, TB_HASH_SIZE};
 use crate::HostCodeGen;
 
-const MAX_TBS: usize = 65536;
+const MAX_TBS: usize = 262144;
 
 /// Thread-safe storage and hash-table lookup for TBs.
 ///
@@ -193,6 +193,42 @@ impl TbStore {
             (tb.jmp_insn_offset[slot], tb.jmp_reset_offset[slot])
         {
             backend.patch_jump(code_buf, jmp_off as usize, reset_off as usize);
+        }
+    }
+
+    /// Invalidate all valid TBs by iterating and calling
+    /// `invalidate()` on each. Safe to call from the exec
+    /// loop (does not require exclusive access).
+    pub fn invalidate_all<B: HostCodeGen>(
+        &self,
+        code_buf: &CodeBuffer,
+        backend: &B,
+    ) {
+        let len = self.len.load(Ordering::Acquire);
+        for i in 0..len {
+            let tb = self.get(i);
+            if !tb.invalid.load(Ordering::Acquire) {
+                self.invalidate(i, code_buf, backend);
+            }
+        }
+    }
+
+    /// Invalidate all TBs whose phys_pc falls within the
+    /// given physical page (page-granularity fence.i).
+    pub fn invalidate_phys_page<B: HostCodeGen>(
+        &self,
+        phys_page: u64,
+        code_buf: &CodeBuffer,
+        backend: &B,
+    ) {
+        let len = self.len.load(Ordering::Acquire);
+        for i in 0..len {
+            let tb = self.get(i);
+            if !tb.invalid.load(Ordering::Acquire)
+                && (tb.phys_pc >> 12) == phys_page
+            {
+                self.invalidate(i, code_buf, backend);
+            }
         }
     }
 

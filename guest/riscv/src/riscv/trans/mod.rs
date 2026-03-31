@@ -14,8 +14,8 @@ use super::RiscvDisasContext;
 use crate::DisasJumpType;
 use machina_accel::ir::context::Context;
 use machina_accel::ir::tb::{
-    EXCP_EBREAK, EXCP_ECALL, EXCP_MRET, EXCP_SFENCE_VMA, EXCP_SRET, EXCP_WFI,
-    TB_EXIT_IDX0, TB_EXIT_NOCHAIN,
+    EXCP_EBREAK, EXCP_ECALL, EXCP_FENCE_I, EXCP_MRET, EXCP_SFENCE_VMA,
+    EXCP_SRET, EXCP_WFI, TB_EXIT_IDX0, TB_EXIT_NOCHAIN,
 };
 use machina_accel::ir::types::{Cond, MemOp, Type};
 
@@ -219,12 +219,12 @@ impl Decode<Context> for RiscvDisasContext {
     }
 
     fn trans_fence_i(&mut self, ir: &mut Context, _a: &ArgsEmpty) -> bool {
-        // Exit TB so the JIT cache is implicitly
-        // invalidated (new TBs will be translated fresh).
+        // Exit TB so the exec loop can invalidate TBs
+        // by physical page (fence.i semantics).
         let next = self.base.pc_next + self.cur_insn_len as u64;
         let pc = ir.new_const(Type::I64, next);
         ir.gen_mov(Type::I64, self.pc, pc);
-        ir.gen_exit_tb(EXCP_SFENCE_VMA);
+        ir.gen_exit_tb(EXCP_FENCE_I);
         self.base.is_jmp = DisasJumpType::NoReturn;
         true
     }
