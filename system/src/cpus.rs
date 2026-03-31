@@ -266,20 +266,40 @@ impl GuestCpu for FullSystemCpu {
                 // != 0b111).
                 let is_32bit = (lo & 0x3) == 0x3 && ((lo >> 2) & 0x7) != 0x7;
                 if is_32bit {
-                    // For cross-page fetch, compute
-                    // page B's physical address. In
-                    // BARE mode, phys == virt so we
-                    // just use phys_pc + page_remain.
-                    let next_phys = phys_pc + page_remain;
-                    let next_off = next_phys.wrapping_sub(RAM_BASE);
-                    if next_off >= self.ram_size {
+                    // Translate page B via MMU for the
+                    // second half of the cross-page
+                    // instruction. Save/restore fault
+                    // state to avoid contaminating the
+                    // main gen_code path.
+                    let next_vpc = pc + page_remain;
+                    let sfc = self.cpu.mem_fault_cause;
+                    let sft = self.cpu.mem_fault_tval;
+                    let sfp = self.cpu.fault_pc;
+                    let next_phys = self.translate_pc(next_vpc);
+                    if next_phys == u64::MAX {
+                        // Page B fault: latch the
+                        // instruction fault and
+                        // truncate TB.
+                        // Keep the fault state from
+                        // translate_pc (it latched the
+                        // correct cause/tval).
                         0u32
                     } else {
-                        let hi = unsafe {
-                            let p = self.ram_ptr.add(next_off as usize);
-                            (p as *const u16).read_unaligned()
-                        };
-                        (lo as u32) | ((hi as u32) << 16)
+                        // Restore fault state since
+                        // page B translation succeeded.
+                        self.cpu.mem_fault_cause = sfc;
+                        self.cpu.mem_fault_tval = sft;
+                        self.cpu.fault_pc = sfp;
+                        let next_off = next_phys.wrapping_sub(RAM_BASE);
+                        if next_off >= self.ram_size {
+                            0u32
+                        } else {
+                            let hi = unsafe {
+                                let p = self.ram_ptr.add(next_off as usize);
+                                (p as *const u16).read_unaligned()
+                            };
+                            (lo as u32) | ((hi as u32) << 16)
+                        }
                     }
                 } else {
                     0u32
