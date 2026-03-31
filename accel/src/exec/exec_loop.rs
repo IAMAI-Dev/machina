@@ -149,17 +149,20 @@ where
                     cpu.set_halted(false);
                     cpu.handle_interrupt();
                 } else {
-                    // Wait for interrupt via condvar or
-                    // timeout (default: returns false).
                     let woken = cpu.wait_for_interrupt();
-                    if woken && cpu.pending_interrupt() {
-                        cpu.set_halted(false);
-                        cpu.handle_interrupt();
-                    } else {
+                    cpu.set_halted(false);
+                    if !woken {
+                        // Manager stop — exit loop.
                         return ExitReason::Halted;
                     }
+                    // Woken by IRQ or timer. Check for
+                    // pending interrupt and handle if any;
+                    // otherwise resume (timer expired,
+                    // guest will re-read mtime).
+                    if cpu.pending_interrupt() {
+                        cpu.handle_interrupt();
+                    }
                 }
-                // Continue execution after WFI wakeup.
             }
             v if v == EXCP_ECALL as usize => {
                 // The translator emits a unified EXCP_ECALL;

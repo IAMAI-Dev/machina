@@ -73,20 +73,34 @@ impl Aclint {
     /// mtimecmp across all harts.
     fn update_wfi_deadline(&self) {
         if let Some(ref wk) = self.wfi_waker {
-            let nearest =
-                self.mtimecmp.iter().copied().min().unwrap_or(u64::MAX);
+            let nearest = self
+                .mtimecmp
+                .iter()
+                .copied()
+                .min()
+                .unwrap_or(u64::MAX);
+            if nearest == u64::MAX {
+                wk.clear_deadline();
+                return;
+            }
             let now = self.read_mtime();
             if nearest <= now {
-                // Already past — wake immediately.
-                wk.wake();
-            } else {
-                let delta_ticks = nearest - now;
-                let delta_ns = delta_ticks * 100;
-                let deadline =
-                    Instant::now() + std::time::Duration::from_nanos(delta_ns);
-                wk.set_deadline(deadline);
-                wk.wake(); // re-evaluate ongoing wait
+                // Already past — IRQ line already set
+                // by the mtimecmp write path. Just wake
+                // via IRQ (the line.set(true) already
+                // called wake()).
+                return;
             }
+            let delta_ticks = nearest - now;
+            // Guard against overflow: cap at ~100 seconds.
+            let delta_ns = delta_ticks
+                .saturating_mul(100)
+                .min(100_000_000_000);
+            let deadline = Instant::now()
+                + std::time::Duration::from_nanos(delta_ns);
+            // set_deadline notifies condvar without
+            // setting irq_pending.
+            wk.set_deadline(deadline);
         }
     }
 

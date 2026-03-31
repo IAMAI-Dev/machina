@@ -9,8 +9,6 @@ use std::sync::Arc;
 
 use machina_accel::exec::exec_loop::{cpu_exec_loop, ExitReason};
 use machina_accel::exec::{PerCpuState, SharedState};
-use machina_accel::ir::context::Context;
-use machina_accel::GuestCpu;
 use machina_accel::HostCodeGen;
 use machina_core::wfi::WfiWaker;
 
@@ -31,6 +29,11 @@ impl CpuManager {
 
     pub fn set_wfi_waker(&mut self, wk: Arc<WfiWaker>) {
         self.wfi_waker = Some(wk);
+    }
+
+    /// Get a clone of the running flag for external stop.
+    pub fn running_flag(&self) -> Arc<AtomicBool> {
+        self.running.clone()
     }
 
     /// Add a CPU to be managed. Ownership is transferred.
@@ -55,17 +58,33 @@ impl CpuManager {
     /// # Safety
     /// Each CPU's `env_ptr()` must return a valid pointer
     /// to its RiscvCpu struct matching translation globals.
-    pub unsafe fn run<B>(&mut self, shared: &SharedState<B>) -> ExitReason
+    pub unsafe fn run<B>(
+        &mut self,
+        shared: &SharedState<B>,
+    ) -> ExitReason
     where
         B: HostCodeGen,
     {
         if self.cpus.is_empty() {
             return ExitReason::Exit(0);
         }
-        // Single-CPU: run on current thread.
+        let running = Arc::clone(&self.running);
         let cpu = &mut self.cpus[0];
         let mut per_cpu = PerCpuState::new();
-        cpu_exec_loop(shared, &mut per_cpu, cpu)
+        loop {
+            let r = cpu_exec_loop(
+                shared, &mut per_cpu, cpu,
+            );
+            match r {
+                ExitReason::Halted => {
+                    if !running.load(Ordering::SeqCst) {
+                        return r;
+                    }
+                }
+                ExitReason::BufferFull => {}
+                other => return other,
+            }
+        }
     }
 }
 

@@ -54,13 +54,13 @@ impl WfiWaker {
         self.cv.notify_all();
     }
 
-    /// Set the nearest timer deadline. The next wait()
-    /// call will use wait_timeout with this deadline.
-    /// Call wake() after this to re-evaluate an ongoing
-    /// wait.
+    /// Set the nearest timer deadline. Notifies the
+    /// condvar so an ongoing wait() recalculates its
+    /// timeout, but does NOT set irq_pending.
     pub fn set_deadline(&self, deadline: Instant) {
         let mut s = self.state.lock().unwrap();
         s.deadline = Some(deadline);
+        self.cv.notify_all();
     }
 
     /// Clear the timer deadline.

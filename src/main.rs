@@ -182,8 +182,23 @@ fn main() {
     };
 
     let mut cpu_mgr = CpuManager::new();
-    cpu_mgr.set_wfi_waker(wfi_waker);
+    cpu_mgr.set_wfi_waker(wfi_waker.clone());
     cpu_mgr.add_cpu(fs_cpu);
+
+    // Wire SiFive Test shutdown to CpuManager::stop().
+    {
+        let running = cpu_mgr.running_flag();
+        let wk = wfi_waker;
+        machine.sifive_test().set_shutdown_handler(
+            Box::new(move |_reason| {
+                running.store(
+                    false,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                wk.stop();
+            }),
+        );
+    }
 
     eprintln!("machina: entering execution loop");
 
