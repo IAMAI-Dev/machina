@@ -1459,8 +1459,23 @@ impl X86_64CodeGen {
         emit_call_reg(buf, Reg::R11);
 
         // Save result, restore regs, load result.
+        // Restore caller-saved regs first, then
+        // overwrite RAX/R10/R11 from TLB_SAVE (the
+        // pre-TLB-check originals) so that non-output
+        // registers are correct at the join point.
         emit_store(buf, true, Reg::Rax, Reg::Rsp, Self::MMIO_SCRATCH);
         Self::emit_restore_caller_regs(buf);
+        // Restore RAX/R10/R11 from TLB_SAVE (not the
+        // clobbered values saved by emit_save_caller_regs).
+        if dst != Reg::R10 {
+            emit_load(buf, true, Reg::R10, Reg::Rsp, Self::TLB_SAVE_R10);
+        }
+        if dst != Reg::R11 {
+            emit_load(buf, true, Reg::R11, Reg::Rsp, Self::TLB_SAVE_R11);
+        }
+        if dst != Reg::Rax {
+            emit_load(buf, true, Reg::Rax, Reg::Rsp, Self::TLB_SAVE_RAX);
+        }
         emit_load(buf, true, dst, Reg::Rsp, Self::MMIO_SCRATCH);
 
         // Sign-extend if needed
@@ -1584,6 +1599,12 @@ impl X86_64CodeGen {
         emit_mov_ri(buf, true, Reg::R11, cfg.store_helper);
         emit_call_reg(buf, Reg::R11);
         Self::emit_restore_caller_regs(buf);
+        // Restore RAX/R10/R11 from TLB_SAVE (the
+        // pre-TLB-check originals) so non-scratch
+        // registers are correct at the join point.
+        emit_load(buf, true, Reg::R10, Reg::Rsp, Self::TLB_SAVE_R10);
+        emit_load(buf, true, Reg::R11, Reg::Rsp, Self::TLB_SAVE_R11);
+        emit_load(buf, true, Reg::Rax, Reg::Rsp, Self::TLB_SAVE_RAX);
 
         // Check mem_fault_cause after helper.
         self.emit_fault_check(buf, cfg);
