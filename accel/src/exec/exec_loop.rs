@@ -84,10 +84,6 @@ where
     loop {
         if sigsetjmp(jmp_ptr, 0) != 0 {
             // Helper raised an exception via longjmp.
-            // The exception was already delivered by
-            // raise_exception() before the longjmp.
-            // Just continue the exec loop to re-check
-            // interrupts and translate the next TB.
             next_tb_hint = None;
         }
         per_cpu.stats.loop_iters += 1;

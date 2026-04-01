@@ -332,6 +332,14 @@ impl CsrFile {
                 Ok((self.fflags & FFLAGS_MASK) | ((self.frm & FRM_MASK) << 5))
             }
 
+            // Machine HPM counters (0xB03-0xB1F) and
+            // event selectors (0x323-0x33F): return 0.
+            addr if (0xB03..=0xB1F).contains(&addr)
+                || (0x323..=0x33F).contains(&addr) =>
+            {
+                Ok(0)
+            }
+
             _ => Err(CAUSE_ILLEGAL_INSN),
         }
     }
@@ -485,6 +493,14 @@ impl CsrFile {
             CSR_FCSR => {
                 self.fflags = val & FFLAGS_MASK;
                 self.frm = (val >> 5) & FRM_MASK;
+                Ok(())
+            }
+
+            // Machine HPM counters and event selectors:
+            // silently ignore writes.
+            addr if (0xB03..=0xB1F).contains(&addr)
+                || (0x323..=0x33F).contains(&addr) =>
+            {
                 Ok(())
             }
 
