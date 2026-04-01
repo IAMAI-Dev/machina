@@ -829,10 +829,24 @@ unsafe fn write_phys(cpu: *mut RiscvCpu, pa: u64, val: u64) {
     write_phys_sized(cpu, pa, val, 8);
 }
 
+/// Check whether a physical address range is backed by
+/// RAM or a mapped MMIO device.
+fn is_phys_backed(cpu: &RiscvCpu, pa: u64, size: u32) -> bool {
+    if pa >= RAM_BASE
+        && pa.checked_add(size as u64)
+            .is_some_and(|end| end <= cpu.ram_end)
+    {
+        return true;
+    }
+    let asp = cpu.as_ptr;
+    if asp == 0 {
+        return false;
+    }
+    let as_ = unsafe { &*(asp as *const AddressSpace) };
+    as_.is_mapped(GPA::new(pa), size)
+}
+
 /// JIT slow path: guest load (TLB miss or MMIO).
-///
-/// Receives a guest virtual address, translates through
-/// MMU, fills TLB, and performs the memory read.
 ///
 /// # Safety
 /// `env` must point to a valid `RiscvCpu`.
@@ -843,8 +857,20 @@ pub unsafe extern "C" fn machina_mem_read(
     size: u32,
 ) -> u64 {
     let cpu = &mut *(env as *mut RiscvCpu);
-    match translate_for_helper(cpu, gva, AccessType::Read, size) {
-        Some(pa) => read_phys_sized(cpu, pa, size),
+    match translate_for_helper(
+        cpu,
+        gva,
+        AccessType::Read,
+        size,
+    ) {
+        Some(pa) => {
+            if !is_phys_backed(cpu, pa, size) {
+                cpu.mem_fault_cause = 5;
+                cpu.mem_fault_tval = gva;
+                return 0;
+            }
+            read_phys_sized(cpu, pa, size)
+        }
         None => 0,
     }
 }
@@ -861,7 +887,17 @@ pub unsafe extern "C" fn machina_mem_write(
     size: u32,
 ) {
     let cpu = &mut *(env as *mut RiscvCpu);
-    if let Some(pa) = translate_for_helper(cpu, gva, AccessType::Write, size) {
+    if let Some(pa) = translate_for_helper(
+        cpu,
+        gva,
+        AccessType::Write,
+        size,
+    ) {
+        if !is_phys_backed(cpu, pa, size) {
+            cpu.mem_fault_cause = 7;
+            cpu.mem_fault_tval = gva;
+            return;
+        }
         write_phys_sized(cpu, pa, val, size);
     }
 }
