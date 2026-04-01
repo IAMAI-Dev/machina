@@ -537,12 +537,25 @@ impl Decode<Context> for RiscvDisasContext {
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
             None => {
+                if self.csr_helper != 0 {
+                    let rs1 = self.gpr_or_zero(ir, a.rs1);
+                    self.gen_csr_helper(
+                        ir, a.csr, rs1, 1, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
         };
         let rs1 = self.gpr_or_zero(ir, a.rs1);
         if !self.gen_csr_write(ir, a.csr, rs1) {
+            if self.csr_helper != 0 {
+                self.gen_csr_helper(
+                    ir, a.csr, rs1, 1, a.rd,
+                );
+                return true;
+            }
             self.gen_priv_csr_exit(ir);
             return true;
         }
@@ -555,6 +568,13 @@ impl Decode<Context> for RiscvDisasContext {
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
             None => {
+                if self.csr_helper != 0 {
+                    let rs1 = self.gpr_or_zero(ir, a.rs1);
+                    self.gen_csr_helper(
+                        ir, a.csr, rs1, 2, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
@@ -564,6 +584,12 @@ impl Decode<Context> for RiscvDisasContext {
             let new = ir.new_temp(Type::I64);
             ir.gen_or(Type::I64, new, old, rs1);
             if !self.gen_csr_write(ir, a.csr, new) {
+                if self.csr_helper != 0 {
+                    self.gen_csr_helper(
+                        ir, a.csr, rs1, 2, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
@@ -577,6 +603,13 @@ impl Decode<Context> for RiscvDisasContext {
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
             None => {
+                if self.csr_helper != 0 {
+                    let rs1 = self.gpr_or_zero(ir, a.rs1);
+                    self.gen_csr_helper(
+                        ir, a.csr, rs1, 3, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
@@ -588,6 +621,12 @@ impl Decode<Context> for RiscvDisasContext {
             let new = ir.new_temp(Type::I64);
             ir.gen_and(Type::I64, new, old, inv);
             if !self.gen_csr_write(ir, a.csr, new) {
+                if self.csr_helper != 0 {
+                    self.gen_csr_helper(
+                        ir, a.csr, rs1, 3, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
@@ -601,12 +640,28 @@ impl Decode<Context> for RiscvDisasContext {
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
             None => {
+                if self.csr_helper != 0 {
+                    let zimm = ir.new_const(
+                        Type::I64,
+                        a.rs1 as u64,
+                    );
+                    self.gen_csr_helper(
+                        ir, a.csr, zimm, 5, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
         };
         let zimm = ir.new_const(Type::I64, a.rs1 as u64);
         if !self.gen_csr_write(ir, a.csr, zimm) {
+            if self.csr_helper != 0 {
+                self.gen_csr_helper(
+                    ir, a.csr, zimm, 5, a.rd,
+                );
+                return true;
+            }
             self.gen_priv_csr_exit(ir);
             return true;
         }
@@ -619,6 +674,16 @@ impl Decode<Context> for RiscvDisasContext {
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
             None => {
+                if self.csr_helper != 0 {
+                    let zimm = ir.new_const(
+                        Type::I64,
+                        a.rs1 as u64,
+                    );
+                    self.gen_csr_helper(
+                        ir, a.csr, zimm, 6, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
@@ -628,6 +693,12 @@ impl Decode<Context> for RiscvDisasContext {
             let new = ir.new_temp(Type::I64);
             ir.gen_or(Type::I64, new, old, zimm);
             if !self.gen_csr_write(ir, a.csr, new) {
+                if self.csr_helper != 0 {
+                    self.gen_csr_helper(
+                        ir, a.csr, zimm, 6, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
@@ -641,6 +712,16 @@ impl Decode<Context> for RiscvDisasContext {
         let old = match self.gen_csr_read(ir, a.csr) {
             Some(v) => v,
             None => {
+                if self.csr_helper != 0 {
+                    let zimm = ir.new_const(
+                        Type::I64,
+                        a.rs1 as u64,
+                    );
+                    self.gen_csr_helper(
+                        ir, a.csr, zimm, 7, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
@@ -652,6 +733,12 @@ impl Decode<Context> for RiscvDisasContext {
             let new = ir.new_temp(Type::I64);
             ir.gen_and(Type::I64, new, old, inv);
             if !self.gen_csr_write(ir, a.csr, new) {
+                if self.csr_helper != 0 {
+                    self.gen_csr_helper(
+                        ir, a.csr, zimm, 7, a.rd,
+                    );
+                    return true;
+                }
                 self.gen_priv_csr_exit(ir);
                 return true;
             }
