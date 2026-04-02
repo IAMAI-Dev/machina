@@ -88,7 +88,7 @@ impl MonitorState {
         *self.wfi_waker.lock().unwrap() =
             Some(Arc::clone(&wk));
         if needs_wake {
-            wk.wake();
+            wk.monitor_wake();
         }
     }
 
@@ -100,11 +100,12 @@ impl MonitorState {
             return;
         }
         *state = VmState::PauseRequested;
-        // Wake CPU if in WFI.
+        // Wake CPU if in WFI (without injecting
+        // spurious IRQ).
         if let Some(ref wk) =
             *self.wfi_waker.lock().unwrap()
         {
-            wk.wake();
+            wk.monitor_wake();
         }
         // Wait for exec loop to park, or for cancel
         // (cont/quit changed state back to Running).
