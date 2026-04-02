@@ -69,21 +69,44 @@ impl Chardev for NullChardev {
 
 // -- StdioChardev ------------------------------------------------
 
-/// Wraps host stdin/stdout. Spawns a reader thread when
-/// start_input() is called.
+/// Wraps host stdin/stdout with QEMU-compatible escape
+/// sequences (Ctrl+A prefix):
+///   Ctrl+A, X — exit emulator
+///   Ctrl+A, H — show help
+///   Ctrl+A, Ctrl+A — send literal Ctrl+A
 pub struct StdioChardev {
     _thread: Option<std::thread::JoinHandle<()>>,
+    saved_termios: Option<libc::termios>,
 }
+
+const ESCAPE_CHAR: u8 = 0x01; // Ctrl+A
 
 impl StdioChardev {
     pub fn new() -> Self {
-        Self { _thread: None }
+        let saved = enable_raw_mode();
+        if saved.is_some() {
+            eprintln!(
+                "machina: Ctrl+A H for help"
+            );
+        }
+        Self {
+            _thread: None,
+            saved_termios: saved,
+        }
     }
 }
 
 impl Default for StdioChardev {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for StdioChardev {
+    fn drop(&mut self) {
+        if let Some(ref t) = self.saved_termios {
+            restore_termios(t);
+        }
     }
 }
 
@@ -102,17 +125,68 @@ impl Chardev for StdioChardev {
         false
     }
 
-    fn start_input(&mut self, cb: Arc<Mutex<dyn FnMut(u8) + Send>>) {
+    fn start_input(
+        &mut self,
+        cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
+    ) {
         let handle = std::thread::spawn(move || {
             use std::io::Read;
             let stdin = std::io::stdin();
             let mut buf = [0u8; 1];
+            let mut escape = false;
             loop {
                 match stdin.lock().read(&mut buf) {
-                    Ok(0) => break, // EOF
+                    Ok(0) => break,
                     Ok(_) => {
-                        if let Ok(mut f) = cb.lock() {
-                            f(buf[0]);
+                        let ch = buf[0];
+                        if escape {
+                            escape = false;
+                            match ch {
+                                b'x' | b'X' => {
+                                    eprintln!(
+                                        "\nmachina: \
+                                         terminated \
+                                         by user"
+                                    );
+                                    std::process::exit(0);
+                                }
+                                b'h' | b'H' => {
+                                    eprintln!(
+                                        "\nCtrl+A H  \
+                                         this help\n\
+                                         Ctrl+A X  \
+                                         exit\n\
+                                         Ctrl+A \
+                                         Ctrl+A  \
+                                         send Ctrl+A"
+                                    );
+                                }
+                                ESCAPE_CHAR => {
+                                    if let Ok(mut f) =
+                                        cb.lock()
+                                    {
+                                        f(ESCAPE_CHAR);
+                                    }
+                                }
+                                _ => {
+                                    // Unknown: ignore
+                                    // the escape and
+                                    // pass the char.
+                                    if let Ok(mut f) =
+                                        cb.lock()
+                                    {
+                                        f(ch);
+                                    }
+                                }
+                            }
+                        } else if ch == ESCAPE_CHAR {
+                            escape = true;
+                        } else {
+                            if let Ok(mut f) =
+                                cb.lock()
+                            {
+                                f(ch);
+                            }
                         }
                     }
                     Err(_) => break,
@@ -120,6 +194,38 @@ impl Chardev for StdioChardev {
             }
         });
         self._thread = Some(handle);
+    }
+}
+
+fn enable_raw_mode() -> Option<libc::termios> {
+    unsafe {
+        let mut orig: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(0, &mut orig) != 0 {
+            return None;
+        }
+        let mut raw = orig;
+        // Disable canonical mode, echo, and signals.
+        raw.c_lflag &=
+            !(libc::ICANON | libc::ECHO | libc::ISIG);
+        // Disable input processing (Ctrl+C, Ctrl+S, etc).
+        raw.c_iflag &= !(libc::IXON
+            | libc::ICRNL
+            | libc::INLCR
+            | libc::IGNCR);
+        // Read 1 byte at a time.
+        raw.c_cc[libc::VMIN] = 1;
+        raw.c_cc[libc::VTIME] = 0;
+        if libc::tcsetattr(0, libc::TCSANOW, &raw) != 0
+        {
+            return None;
+        }
+        Some(orig)
+    }
+}
+
+fn restore_termios(orig: &libc::termios) {
+    unsafe {
+        libc::tcsetattr(0, libc::TCSANOW, orig);
     }
 }
 
