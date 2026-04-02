@@ -94,18 +94,26 @@ fn handle_info(
             }
         }
         "cpus" => {
+            let running = s.query_status();
             let cpus = s.query_cpus();
             let mut out = String::new();
             for c in &cpus {
-                let state = if c.halted {
-                    "halted"
+                if running {
+                    out.push_str(&format!(
+                        "* CPU #{}: (running)\n",
+                        c.cpu_index
+                    ));
                 } else {
-                    "running"
-                };
-                out.push_str(&format!(
-                    "* CPU #{}: pc={:#x} ({})\n",
-                    c.cpu_index, c.pc, state
-                ));
+                    let state = if c.halted {
+                        "halted"
+                    } else {
+                        "stopped"
+                    };
+                    out.push_str(&format!(
+                        "* CPU #{}: pc={:#x} ({})\n",
+                        c.cpu_index, c.pc, state
+                    ));
+                }
             }
             Some(out)
         }
