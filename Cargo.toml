@@ -42,4 +42,6 @@ machina-memory = { path = "memory" }
 machina-hw-riscv = { path = "hw/riscv" }
 machina-system = { path = "system" }
 machina-difftest = { path = "tools/difftest" }
+machina-monitor = { path = "monitor" }
+machina-hw-core = { path = "hw/core" }
 libc = "0.2"

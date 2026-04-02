@@ -1,0 +1,137 @@
+// Shared monitor state for vCPU pause/resume control.
+//
+// Used by the exec loop (system crate) and monitor
+// console (monitor crate) to coordinate vCPU pausing.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+
+/// vCPU execution state as seen by the monitor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VmState {
+    Running,
+    PauseRequested,
+    Paused,
+}
+
+/// Shared state between exec loop and monitor.
+pub struct MonitorState {
+    inner: Mutex<VmState>,
+    pause_barrier: Condvar,
+    resume_cv: Condvar,
+    quit_requested: AtomicBool,
+    /// WFI waker to unblock halted CPU on pause.
+    wfi_waker: Mutex<Option<Arc<crate::wfi::WfiWaker>>>,
+}
+
+impl MonitorState {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(VmState::Running),
+            pause_barrier: Condvar::new(),
+            resume_cv: Condvar::new(),
+            quit_requested: AtomicBool::new(false),
+            wfi_waker: Mutex::new(None),
+        }
+    }
+
+    /// Set the WFI waker for CPU wake-on-pause.
+    pub fn set_wfi_waker(
+        &self,
+        wk: Arc<crate::wfi::WfiWaker>,
+    ) {
+        *self.wfi_waker.lock().unwrap() = Some(wk);
+    }
+
+    /// Request vCPU to pause. Blocks until the exec
+    /// loop confirms it has parked.
+    pub fn request_stop(&self) {
+        let mut state = self.inner.lock().unwrap();
+        if *state == VmState::Paused {
+            return;
+        }
+        *state = VmState::PauseRequested;
+        // Wake CPU if in WFI.
+        if let Some(ref wk) =
+            *self.wfi_waker.lock().unwrap()
+        {
+            wk.wake();
+        }
+        // Wait for exec loop to park.
+        while *state != VmState::Paused {
+            state = self
+                .pause_barrier
+                .wait(state)
+                .unwrap();
+        }
+    }
+
+    /// Resume from paused state.
+    pub fn request_cont(&self) {
+        let mut state = self.inner.lock().unwrap();
+        if *state == VmState::Running {
+            return;
+        }
+        *state = VmState::Running;
+        self.resume_cv.notify_all();
+    }
+
+    /// Request clean process exit.
+    pub fn request_quit(&self) {
+        self.quit_requested.store(true, Ordering::SeqCst);
+        // Resume if paused, so exec loop can exit.
+        let mut state = self.inner.lock().unwrap();
+        *state = VmState::Running;
+        self.resume_cv.notify_all();
+        // Wake WFI if halted.
+        if let Some(ref wk) =
+            *self.wfi_waker.lock().unwrap()
+        {
+            wk.stop();
+        }
+    }
+
+    /// Check if quit was requested.
+    pub fn is_quit_requested(&self) -> bool {
+        self.quit_requested.load(Ordering::SeqCst)
+    }
+
+    /// Called by the exec loop at the top of each
+    /// iteration. If PauseRequested, parks the vCPU
+    /// and blocks until resumed.
+    /// Returns true if quit was requested.
+    pub fn check_pause(&self) -> bool {
+        if self.is_quit_requested() {
+            return true;
+        }
+        let mut state = self.inner.lock().unwrap();
+        if *state == VmState::PauseRequested {
+            *state = VmState::Paused;
+            self.pause_barrier.notify_all();
+            // Wait for resume or quit.
+            while *state == VmState::Paused {
+                state =
+                    self.resume_cv.wait(state).unwrap();
+            }
+        }
+        self.is_quit_requested()
+    }
+
+    /// Get current VM state.
+    pub fn vm_state(&self) -> VmState {
+        *self.inner.lock().unwrap()
+    }
+
+    /// Check if pause is requested (non-blocking).
+    pub fn is_pause_requested(&self) -> bool {
+        let s = self.inner.lock().unwrap();
+        *s == VmState::PauseRequested
+            || *s == VmState::Paused
+    }
+}
+
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}

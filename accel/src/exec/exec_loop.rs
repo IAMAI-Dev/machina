@@ -276,7 +276,12 @@ where
                     let woken = cpu.wait_for_interrupt();
                     cpu.set_halted(false);
                     if !woken {
-                        // Manager stop — exit loop.
+                        return ExitReason::Halted;
+                    }
+                    // Check monitor pause after WFI
+                    // wake (may have been woken for
+                    // pause, not IRQ).
+                    if cpu.check_monitor_pause() {
                         return ExitReason::Halted;
                     }
                     // Woken by IRQ or timer. Check for
@@ -325,6 +330,11 @@ where
         if !cpu.check_mem_fault() && cpu.pending_interrupt() {
             cpu.handle_interrupt();
             next_tb_hint = None;
+        }
+
+        // Monitor pause check (blocks if paused).
+        if cpu.check_monitor_pause() {
+            return ExitReason::Halted;
         }
 
         // External stop check (SiFive Test shutdown, etc).

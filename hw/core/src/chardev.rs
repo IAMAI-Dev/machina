@@ -72,11 +72,18 @@ impl Chardev for NullChardev {
 /// Wraps host stdin/stdout with QEMU-compatible escape
 /// sequences (Ctrl+A prefix):
 ///   Ctrl+A, X — exit emulator
+///   Ctrl+A, C — toggle monitor console
 ///   Ctrl+A, H — show help
 ///   Ctrl+A, Ctrl+A — send literal Ctrl+A
 pub struct StdioChardev {
     _thread: Option<std::thread::JoinHandle<()>>,
     saved_termios: Option<libc::termios>,
+    /// Monitor line callback for Ctrl+A C toggle.
+    monitor_cb: Option<
+        Arc<Mutex<dyn FnMut(u8) + Send>>,
+    >,
+    /// Quit callback for Ctrl+A X.
+    quit_cb: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 const ESCAPE_CHAR: u8 = 0x01; // Ctrl+A
@@ -92,7 +99,26 @@ impl StdioChardev {
         Self {
             _thread: None,
             saved_termios: saved,
+            monitor_cb: None,
+            quit_cb: None,
         }
+    }
+
+    /// Set a callback invoked when Ctrl+A X is pressed
+    /// instead of calling process::exit().
+    pub fn set_quit_cb(
+        &mut self,
+        cb: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        self.quit_cb = Some(cb);
+    }
+
+    /// Set a monitor line callback for Ctrl+A C toggle.
+    pub fn set_monitor_cb(
+        &mut self,
+        cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
+    ) {
+        self.monitor_cb = Some(cb);
     }
 }
 
@@ -129,11 +155,14 @@ impl Chardev for StdioChardev {
         &mut self,
         cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
     ) {
+        let quit_cb = self.quit_cb.clone();
+        let mon_cb = self.monitor_cb.clone();
         let handle = std::thread::spawn(move || {
             use std::io::Read;
             let stdin = std::io::stdin();
             let mut buf = [0u8; 1];
             let mut escape = false;
+            let mut in_monitor = false;
             loop {
                 match stdin.lock().read(&mut buf) {
                     Ok(0) => break,
@@ -143,50 +172,63 @@ impl Chardev for StdioChardev {
                             escape = false;
                             match ch {
                                 b'x' | b'X' => {
-                                    eprintln!(
-                                        "\nmachina: \
-                                         terminated \
-                                         by user"
-                                    );
-                                    std::process::exit(0);
+                                    if let Some(ref q)
+                                        = quit_cb
+                                    {
+                                        q();
+                                    } else {
+                                        std::process::exit(
+                                            0,
+                                        );
+                                    }
+                                    break;
+                                }
+                                b'c' | b'C' => {
+                                    in_monitor =
+                                        !in_monitor;
+                                    if in_monitor {
+                                        eprint!("\n");
+                                    }
                                 }
                                 b'h' | b'H' => {
                                     eprintln!(
                                         "\nCtrl+A H  \
-                                         this help\n\
+                                         help\n\
                                          Ctrl+A X  \
                                          exit\n\
+                                         Ctrl+A C  \
+                                         monitor\n\
                                          Ctrl+A \
                                          Ctrl+A  \
                                          send Ctrl+A"
                                     );
                                 }
                                 ESCAPE_CHAR => {
-                                    if let Ok(mut f) =
-                                        cb.lock()
-                                    {
-                                        f(ESCAPE_CHAR);
-                                    }
+                                    send_to(
+                                        &cb,
+                                        &mon_cb,
+                                        in_monitor,
+                                        ESCAPE_CHAR,
+                                    );
                                 }
                                 _ => {
-                                    // Unknown: ignore
-                                    // the escape and
-                                    // pass the char.
-                                    if let Ok(mut f) =
-                                        cb.lock()
-                                    {
-                                        f(ch);
-                                    }
+                                    send_to(
+                                        &cb,
+                                        &mon_cb,
+                                        in_monitor,
+                                        ch,
+                                    );
                                 }
                             }
                         } else if ch == ESCAPE_CHAR {
                             escape = true;
                         } else {
-                            if let Ok(mut f) =
-                                cb.lock()
-                            {
-                                f(ch);
-                            }
+                            send_to(
+                                &cb,
+                                &mon_cb,
+                                in_monitor,
+                                ch,
+                            );
                         }
                     }
                     Err(_) => break,
@@ -197,22 +239,61 @@ impl Chardev for StdioChardev {
     }
 }
 
+fn send_to(
+    serial_cb: &Arc<Mutex<dyn FnMut(u8) + Send>>,
+    monitor_cb: &Option<
+        Arc<Mutex<dyn FnMut(u8) + Send>>,
+    >,
+    in_monitor: bool,
+    ch: u8,
+) {
+    if in_monitor {
+        if let Some(ref m) = monitor_cb {
+            if let Ok(mut f) = m.lock() {
+                f(ch);
+            }
+        }
+    } else {
+        if let Ok(mut f) = serial_cb.lock() {
+            f(ch);
+        }
+    }
+}
+
+/// Global saved termios for atexit restore.
+static SAVED_TERMIOS: std::sync::Mutex<
+    Option<libc::termios>,
+> = std::sync::Mutex::new(None);
+
+/// Restore terminal from raw mode. Safe to call
+/// multiple times or from signal handlers.
+pub fn restore_terminal() {
+    if let Ok(guard) = SAVED_TERMIOS.lock() {
+        if let Some(ref t) = *guard {
+            unsafe {
+                libc::tcsetattr(0, libc::TCSANOW, t);
+            }
+        }
+    }
+}
+
 fn enable_raw_mode() -> Option<libc::termios> {
     unsafe {
         let mut orig: libc::termios = std::mem::zeroed();
         if libc::tcgetattr(0, &mut orig) != 0 {
             return None;
         }
+        // Save globally for atexit restore.
+        if let Ok(mut g) = SAVED_TERMIOS.lock() {
+            *g = Some(orig);
+        }
         let mut raw = orig;
-        // Disable canonical mode, echo, and signals.
         raw.c_lflag &=
             !(libc::ICANON | libc::ECHO | libc::ISIG);
-        // Disable input processing (Ctrl+C, Ctrl+S, etc).
         raw.c_iflag &= !(libc::IXON
             | libc::ICRNL
             | libc::INLCR
             | libc::IGNCR);
-        // Read 1 byte at a time.
         raw.c_cc[libc::VMIN] = 1;
         raw.c_cc[libc::VTIME] = 0;
         if libc::tcsetattr(0, libc::TCSANOW, &raw) != 0

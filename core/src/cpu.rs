@@ -58,6 +58,12 @@ pub trait GuestCpu {
         false
     }
 
+    /// Check monitor pause request. If paused, blocks
+    /// until resumed. Returns true if quit requested.
+    fn check_monitor_pause(&self) -> bool {
+        false
+    }
+
     /// Check and deliver any pending memory fault latched
     /// by JIT helpers. Returns true if a fault was handled.
     fn check_mem_fault(&mut self) -> bool {

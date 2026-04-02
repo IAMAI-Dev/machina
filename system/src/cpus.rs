@@ -90,6 +90,9 @@ pub struct FullSystemCpu {
     shared_mip: SharedMip,
     wfi_waker: Arc<WfiWaker>,
     stop_flag: Arc<AtomicBool>,
+    monitor_state: Option<
+        Arc<machina_core::monitor::MonitorState>,
+    >,
 }
 
 // SAFETY: ram_ptr points to mmap'd memory owned by
@@ -127,7 +130,16 @@ impl FullSystemCpu {
             shared_mip,
             wfi_waker,
             stop_flag,
+            monitor_state: None,
         }
+    }
+
+    /// Attach monitor state for pause/resume control.
+    pub fn set_monitor_state(
+        &mut self,
+        ms: Arc<machina_core::monitor::MonitorState>,
+    ) {
+        self.monitor_state = Some(ms);
     }
 
     /// Read ACLINT mtime register via AddressSpace MMIO.
@@ -636,6 +648,13 @@ impl GuestCpu for FullSystemCpu {
 
     fn should_exit(&self) -> bool {
         !self.stop_flag.load(Ordering::Relaxed)
+    }
+
+    fn check_monitor_pause(&self) -> bool {
+        if let Some(ref ms) = self.monitor_state {
+            return ms.check_pause();
+        }
+        false
     }
 
     fn check_mem_fault(&mut self) -> bool {
