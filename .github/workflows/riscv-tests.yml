@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 90
     env:
       RISCV_TESTS_REPO: https://github.com/riscv-software-src/riscv-tests.git
-      RISCV_TESTS_DIR: ${{ runner.temp }}/riscv-tests
+      RISCV_TESTS_DIR: /tmp/riscv-tests
       RISCV_TESTS_REF: ${{ inputs.riscv_tests_ref || '' }}
       CARGO_TERM_COLOR: always
     steps:
