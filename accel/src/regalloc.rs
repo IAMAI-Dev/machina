@@ -798,8 +798,16 @@ pub fn regalloc_and_codegen(
             Opcode::Nop => continue,
             Opcode::InsnStart => {
                 // Pass through to backend for fault_pc.
-                let ca: Vec<u32> = op.cargs().iter().map(|t| t.0).collect();
-                backend.tcg_out_op(buf, ctx, &op, &[], &[], &ca);
+                let ca: Vec<u32> =
+                    op.cargs().iter().map(|t| t.0).collect();
+                backend.tcg_out_op(
+                    buf, ctx, &op, &[], &[], &ca,
+                );
+                // Highwater check: if code buffer is
+                // nearly full, longjmp back to tb_gen_code
+                // which retries with fewer instructions
+                // (QEMU tcg_raise_tb_overflow equiv).
+                buf.check_highwater();
                 continue;
             }
 

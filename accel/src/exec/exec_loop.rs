@@ -435,18 +435,47 @@ where
         return Some(idx);
     }
 
-    // SAFETY: we hold translate_lock, so exclusive access to
-    // tbs Vec and code_buf emit methods.
-    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, 0) }?;
+    // Translation with overflow retry (QEMU tcg_raise_tb_overflow
+    // equivalent).  If the backend emits more code than fits in
+    // the buffer, siglongjmp lands here with rc == -2 and we
+    // retry with halved max_insns.
+    let mut max_insns = TranslationBlock::max_insns(0);
+    let mut jmp_buf: SigJmpBuf = unsafe { std::mem::zeroed() };
+    let jmp_ptr = &mut jmp_buf as *mut SigJmpBuf;
+    let saved_offset = shared.code_buf().offset();
+
+    loop {
+        let rc = unsafe { sigsetjmp(jmp_ptr, 0) };
+        if rc == -2 {
+            // Overflow: reset code buffer cursor and
+            // retry with fewer instructions.
+            unsafe {
+                shared.code_buf_mut().jmp_trans =
+                    std::ptr::null_mut();
+                shared.code_buf_mut().set_offset(
+                    saved_offset,
+                );
+            }
+            max_insns = (max_insns / 2).max(1);
+            if max_insns == 1 {
+                // Single-instruction TB still overflows —
+                // treat as BufferFull.
+                return None;
+            }
+            continue;
+        }
+        break;
+    }
+
+    // SAFETY: we hold translate_lock.
+    let tb_idx =
+        unsafe { shared.tb_store.alloc(pc, flags, 0) }?;
 
     guard.ir_ctx.reset();
     guard.ir_ctx.tb_idx = tb_idx as u32;
     let guest_size =
-        cpu.gen_code(&mut guard.ir_ctx, pc, TranslationBlock::max_insns(0));
+        cpu.gen_code(&mut guard.ir_ctx, pc, max_insns);
     if guest_size == 0 {
-        // Fetch fault or PC outside RAM. The fault is
-        // latched in mem_fault_cause. Mark TB invalid
-        // so the exec loop re-checks.
         unsafe {
             let tb = shared.tb_store.get_mut(tb_idx);
             tb.invalid.store(true, Ordering::Release);
@@ -459,18 +488,32 @@ where
         tb.size = guest_size;
         tb.phys_pc = phys_pc;
     }
-    // Mark the physical page as containing code so the
-    // store helper can detect writes to code pages.
     shared.tb_store.mark_code_page(phys_pc >> 12);
 
     shared.backend.clear_goto_tb_offsets();
 
-    // SAFETY: translate_lock guarantees exclusive access to
-    // code_buf's write cursor.
+    // Install jmp_trans on code buffer so highwater
+    // check can longjmp back here on overflow.
+    unsafe {
+        shared.code_buf_mut().jmp_trans =
+            jmp_ptr as *mut u8;
+    }
+
     let code_buf_mut = unsafe { shared.code_buf_mut() };
-    let host_offset =
-        translate(&mut guard.ir_ctx, &shared.backend, code_buf_mut);
-    let host_size = shared.code_buf().offset() - host_offset;
+    let host_offset = translate(
+        &mut guard.ir_ctx,
+        &shared.backend,
+        code_buf_mut,
+    );
+
+    // Clear jmp_trans after translation completes.
+    unsafe {
+        shared.code_buf_mut().jmp_trans =
+            std::ptr::null_mut();
+    }
+
+    let host_size =
+        shared.code_buf().offset() - host_offset;
 
     // SAFETY: under translate_lock.
     unsafe {
