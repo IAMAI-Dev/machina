@@ -57,6 +57,18 @@ fn test_ref_machine_uart_mmio() {
 }
 
 #[test]
+fn test_ref_machine_uart_is_realized_via_sysbus() {
+    let mut m = RefMachine::new();
+    m.init(&default_opts()).expect("init failed");
+
+    assert_eq!(m.sysbus().mappings().len(), 1);
+    assert_eq!(m.sysbus().mappings()[0].owner, "uart0");
+
+    let uart = m.uart().lock().unwrap();
+    assert_eq!(uart.chardev_property(), Some("/machine/chardev/uart0"));
+}
+
+#[test]
 fn test_ref_machine_fdt_valid() {
     let mut m = RefMachine::new();
     m.init(&default_opts()).expect("init failed");

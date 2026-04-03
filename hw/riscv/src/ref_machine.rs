@@ -8,7 +8,8 @@ use machina_core::address::GPA;
 use machina_core::machine::{Machine, MachineOpts, MachineState};
 use machina_core::wfi::WfiWaker;
 use machina_guest_riscv::riscv::cpu::RiscvCpu;
-use machina_hw_char::uart::Uart16550;
+use machina_hw_char::uart::{Uart16550, Uart16550Mmio};
+use machina_hw_core::bus::SysBus;
 use machina_hw_core::chardev::{
     CharFrontend, Chardev, NullChardev, StdioChardev,
 };
@@ -148,20 +149,6 @@ impl MmioOps for AclintMmio {
     }
 }
 
-// ---- MMIO adapter: UART 16550 ----
-
-struct UartMmio(Arc<Mutex<Uart16550>>);
-
-impl MmioOps for UartMmio {
-    fn read(&self, offset: u64, _size: u32) -> u64 {
-        self.0.lock().unwrap().read(offset) as u64
-    }
-
-    fn write(&self, offset: u64, _size: u32, val: u64) {
-        self.0.lock().unwrap().write(offset, val as u8);
-    }
-}
-
 // ---- RefMachine ----
 
 pub struct RefMachine {
@@ -170,6 +157,7 @@ pub struct RefMachine {
     ram_size: u64,
     cpu_count: u32,
     address_space: Option<AddressSpace>,
+    sysbus: Option<SysBus>,
     ram_block: Option<Arc<RamBlock>>,
     mrom_block: Option<Arc<RamBlock>>,
     plic: Option<Arc<Mutex<Plic>>>,
@@ -203,6 +191,7 @@ impl RefMachine {
             ram_size: 0,
             cpu_count: 0,
             address_space: None,
+            sysbus: None,
             ram_block: None,
             mrom_block: None,
             plic: None,
@@ -226,6 +215,10 @@ impl RefMachine {
         self.address_space
             .as_ref()
             .expect("machine not initialized")
+    }
+
+    pub fn sysbus(&self) -> &SysBus {
+        self.sysbus.as_ref().expect("machine not initialized")
     }
 
     pub fn plic(&self) -> &Arc<Mutex<Plic>> {
@@ -528,6 +521,8 @@ impl Machine for RefMachine {
             self.cpus = Arc::new(Mutex::new(cpus));
         }
 
+        let mut sysbus = SysBus::new("sysbus0");
+
         // Build the address space.
         let mut root = MemoryRegion::container("system", u64::MAX);
 
@@ -556,12 +551,19 @@ impl Machine for RefMachine {
         root.add_subregion(aclint_region, GPA::new(ACLINT_BASE));
         self.aclint = Some(aclint);
 
-        // UART0.
-        let uart = Arc::new(Mutex::new(Uart16550::new()));
-        let uart_mmio = UartMmio(Arc::clone(&uart));
-        let uart_region =
-            MemoryRegion::io("uart0", UART0_SIZE, Box::new(uart_mmio));
-        root.add_subregion(uart_region, GPA::new(UART0_BASE));
+        // UART0 is migrated through the MOM sysbus path.
+        let uart = Arc::new(Mutex::new(Uart16550::new_named("uart0")));
+        {
+            let mut u = uart.lock().unwrap();
+            u.set_chardev_property("/machine/chardev/uart0")?;
+            u.attach_to_bus(&sysbus)?;
+            let uart_region = MemoryRegion::io(
+                "uart0",
+                UART0_SIZE,
+                Box::new(Uart16550Mmio(Arc::clone(&uart))),
+            );
+            u.register_mmio(uart_region, GPA::new(UART0_BASE))?;
+        }
         self.uart = Some(uart);
 
         // SiFive Test (system reset/shutdown).
@@ -644,7 +646,7 @@ impl Machine for RefMachine {
             } else {
                 Box::new(NullChardev)
             };
-            let mut fe = CharFrontend::new(backend);
+            let fe = CharFrontend::new(backend);
 
             // Wire backend input -> UART receive.
             let uart_for_rx = Arc::clone(self.uart.as_ref().unwrap());
@@ -652,12 +654,18 @@ impl Machine for RefMachine {
                 Arc::new(Mutex::new(move |byte: u8| {
                     uart_for_rx.lock().unwrap().receive(byte);
                 }));
-            fe.start_input(rx_cb);
 
             let mut u = self.uart.as_ref().unwrap().lock().unwrap();
-            u.attach_irq(uart_irq_line);
-            u.attach_chardev(fe);
+            u.attach_irq(uart_irq_line)?;
+            u.attach_chardev(fe)?;
+            u.realize_onto(
+                &mut sysbus,
+                self.address_space.as_mut().unwrap(),
+                rx_cb,
+            )?;
         }
+
+        self.sysbus = Some(sysbus);
 
         // ---- Connect PLIC context outputs ----
         // All IRQ sinks write to shared_mip which is
@@ -727,7 +735,7 @@ impl Machine for RefMachine {
             *aclint.lock().unwrap() = Aclint::new(self.cpu_count);
         }
         if let Some(uart) = &self.uart {
-            *uart.lock().unwrap() = Uart16550::new();
+            uart.lock().unwrap().reset_runtime();
         }
     }
 
