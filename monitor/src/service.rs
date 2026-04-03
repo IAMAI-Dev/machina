@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use machina_core::monitor::{
-    CpuSnapshot, MonitorState, VmState,
-};
+use machina_core::monitor::{CpuSnapshot, MonitorState, VmState};
 
 /// Central monitor service shared by all transports.
 pub struct MonitorService {
@@ -19,8 +17,7 @@ impl MonitorService {
     pub fn query_status(&self) -> bool {
         // Only report paused when actually parked.
         let s = self.state.vm_state();
-        s == VmState::Running
-            || s == VmState::PauseRequested
+        s == VmState::Running || s == VmState::PauseRequested
     }
 
     pub fn stop(&self) {
@@ -44,24 +41,18 @@ impl MonitorService {
             pc: if running {
                 0
             } else {
-                snap.as_ref()
-                    .map(|s| s.pc)
-                    .unwrap_or(0)
+                snap.as_ref().map(|s| s.pc).unwrap_or(0)
             },
             halted: if running {
                 false
             } else {
-                snap.as_ref()
-                    .map(|s| s.halted)
-                    .unwrap_or(false)
+                snap.as_ref().map(|s| s.halted).unwrap_or(false)
             },
             arch: "riscv64".to_string(),
         }]
     }
 
-    pub fn take_snapshot(
-        &self,
-    ) -> Option<CpuSnapshot> {
+    pub fn take_snapshot(&self) -> Option<CpuSnapshot> {
         self.state.read_snapshot()
     }
 }

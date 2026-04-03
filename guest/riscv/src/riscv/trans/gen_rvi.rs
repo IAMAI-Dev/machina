@@ -1,8 +1,8 @@
 //! RVI gen helpers: load/store, ALU, branch.
 
-use super::gen_common::BinOp;
 use super::super::insn_decode::*;
 use super::super::RiscvDisasContext;
+use super::gen_common::BinOp;
 use crate::DisasJumpType;
 use machina_accel::ir::context::Context;
 use machina_accel::ir::tb::{TB_EXIT_IDX0, TB_EXIT_IDX1};
@@ -20,8 +20,7 @@ impl RiscvDisasContext {
     ) -> bool {
         let base = self.gpr_or_zero(ir, a.rs1);
         let addr = if a.imm != 0 {
-            let imm =
-                ir.new_const(Type::I64, a.imm as u64);
+            let imm = ir.new_const(Type::I64, a.imm as u64);
             let t = ir.new_temp(Type::I64);
             ir.gen_add(Type::I64, t, base, imm)
         } else {
@@ -29,9 +28,7 @@ impl RiscvDisasContext {
         };
         self.sync_pc(ir);
         let dst = ir.new_temp(Type::I64);
-        ir.gen_qemu_ld(
-            Type::I64, dst, addr, memop.bits() as u32,
-        );
+        ir.gen_qemu_ld(Type::I64, dst, addr, memop.bits() as u32);
         self.gen_set_gpr(ir, a.rd, dst);
         true
     }
@@ -45,8 +42,7 @@ impl RiscvDisasContext {
     ) -> bool {
         let base = self.gpr_or_zero(ir, a.rs1);
         let addr = if a.imm != 0 {
-            let imm =
-                ir.new_const(Type::I64, a.imm as u64);
+            let imm = ir.new_const(Type::I64, a.imm as u64);
             let t = ir.new_temp(Type::I64);
             ir.gen_add(Type::I64, t, base, imm)
         } else {
@@ -54,9 +50,7 @@ impl RiscvDisasContext {
         };
         let val = self.gpr_or_zero(ir, a.rs2);
         self.sync_pc(ir);
-        ir.gen_qemu_st(
-            Type::I64, val, addr, memop.bits() as u32,
-        );
+        ir.gen_qemu_st(Type::I64, val, addr, memop.bits() as u32);
         true
     }
 
@@ -102,8 +96,7 @@ impl RiscvDisasContext {
         op: BinOp,
     ) -> bool {
         let src = self.gpr_or_zero(ir, a.rs1);
-        let imm =
-            ir.new_const(Type::I64, a.imm as u64);
+        let imm = ir.new_const(Type::I64, a.imm as u64);
         let d = ir.new_temp(Type::I64);
         op(ir, Type::I64, d, src, imm);
         self.gen_set_gpr(ir, a.rd, d);
@@ -118,8 +111,7 @@ impl RiscvDisasContext {
         cond: Cond,
     ) -> bool {
         let src = self.gpr_or_zero(ir, a.rs1);
-        let imm =
-            ir.new_const(Type::I64, a.imm as u64);
+        let imm = ir.new_const(Type::I64, a.imm as u64);
         let d = ir.new_temp(Type::I64);
         ir.gen_setcond(Type::I64, d, src, imm, cond);
         self.gen_set_gpr(ir, a.rd, d);
@@ -136,8 +128,7 @@ impl RiscvDisasContext {
         op: BinOp,
     ) -> bool {
         let src = self.gpr_or_zero(ir, a.rs1);
-        let sh =
-            ir.new_const(Type::I64, a.shamt as u64);
+        let sh = ir.new_const(Type::I64, a.shamt as u64);
         let d = ir.new_temp(Type::I64);
         op(ir, Type::I64, d, src, sh);
         self.gen_set_gpr(ir, a.rd, d);
@@ -169,8 +160,7 @@ impl RiscvDisasContext {
         op: BinOp,
     ) -> bool {
         let src = self.gpr_or_zero(ir, a.rs1);
-        let imm =
-            ir.new_const(Type::I64, a.imm as u64);
+        let imm = ir.new_const(Type::I64, a.imm as u64);
         let d = ir.new_temp(Type::I64);
         op(ir, Type::I64, d, src, imm);
         self.gen_set_gpr_sx32(ir, a.rd, d);
@@ -206,8 +196,7 @@ impl RiscvDisasContext {
         let src = self.gpr_or_zero(ir, a.rs1);
         let s32 = ir.new_temp(Type::I32);
         ir.gen_extrl_i64_i32(s32, src);
-        let sh =
-            ir.new_const(Type::I32, a.shamt as u64);
+        let sh = ir.new_const(Type::I32, a.shamt as u64);
         let d32 = ir.new_temp(Type::I32);
         op(ir, Type::I32, d32, s32, sh);
         self.gen_set_gpr_sx32(ir, a.rd, d32);
@@ -227,13 +216,10 @@ impl RiscvDisasContext {
         let src2 = self.gpr_or_zero(ir, a.rs2);
 
         let taken = ir.new_label();
-        ir.gen_brcond(
-            Type::I64, src1, src2, cond, taken,
-        );
+        ir.gen_brcond(Type::I64, src1, src2, cond, taken);
 
         // Not taken: PC = next insn, chain slot 0.
-        let next_pc =
-            self.base.pc_next + self.cur_insn_len as u64;
+        let next_pc = self.base.pc_next + self.cur_insn_len as u64;
         let c = ir.new_const(Type::I64, next_pc);
         ir.gen_mov(Type::I64, self.pc, c);
         ir.gen_goto_tb(0);
@@ -241,8 +227,7 @@ impl RiscvDisasContext {
 
         // Taken: PC = branch target, chain slot 1.
         ir.gen_set_label(taken);
-        let target =
-            (self.base.pc_next as i64 + a.imm) as u64;
+        let target = (self.base.pc_next as i64 + a.imm) as u64;
         let c = ir.new_const(Type::I64, target);
         ir.gen_mov(Type::I64, self.pc, c);
         ir.gen_goto_tb(1);

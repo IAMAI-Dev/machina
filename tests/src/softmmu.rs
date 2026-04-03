@@ -1,7 +1,6 @@
 //! SoftMMU/TLB regression tests covering plan ACs.
 
 use machina_guest_riscv::riscv::csr::PrivLevel;
-use machina_guest_riscv::riscv::exception::Exception;
 use machina_guest_riscv::riscv::mmu::{
     AccessType, Mmu, TLB_MMIO_ADDEND, TLB_SIZE,
 };

@@ -9,8 +9,7 @@ struct SigJmpBuf([u8; 200]);
 
 unsafe extern "C" {
     #[link_name = "__sigsetjmp"]
-    fn sigsetjmp(env: *mut SigJmpBuf, savemask: i32)
-        -> i32;
+    fn sigsetjmp(env: *mut SigJmpBuf, savemask: i32) -> i32;
 }
 
 use super::{ExecEnv, PerCpuState, SharedState, MIN_CODE_BUF_REMAINING};
@@ -141,13 +140,11 @@ where
             let dirty = cpu.take_dirty_pages();
             if !dirty.is_empty() {
                 for page in &dirty {
-                    shared
-                        .tb_store
-                        .invalidate_phys_page(
-                            *page,
-                            shared.code_buf(),
-                            &shared.backend,
-                        );
+                    shared.tb_store.invalidate_phys_page(
+                        *page,
+                        shared.code_buf(),
+                        &shared.backend,
+                    );
                 }
                 per_cpu.jump_cache.invalidate();
                 next_tb_hint = None;
@@ -246,10 +243,9 @@ where
                 // it, a chained TB may execute stale code
                 // from a previous page-table mapping.
                 cpu.tlb_flush();
-                shared.tb_store.invalidate_all(
-                    shared.code_buf(),
-                    &shared.backend,
-                );
+                shared
+                    .tb_store
+                    .invalidate_all(shared.code_buf(), &shared.backend);
                 per_cpu.jump_cache.invalidate();
                 next_tb_hint = None;
             }
@@ -263,19 +259,16 @@ where
                 if dirty.is_empty() {
                     // No code-page writes tracked:
                     // conservative full flush.
-                    shared.tb_store.invalidate_all(
-                        shared.code_buf(),
-                        &shared.backend,
-                    );
+                    shared
+                        .tb_store
+                        .invalidate_all(shared.code_buf(), &shared.backend);
                 } else {
                     for page in &dirty {
-                        shared
-                            .tb_store
-                            .invalidate_phys_page(
-                                *page,
-                                shared.code_buf(),
-                                &shared.backend,
-                            );
+                        shared.tb_store.invalidate_phys_page(
+                            *page,
+                            shared.code_buf(),
+                            &shared.backend,
+                        );
                     }
                 }
                 per_cpu.jump_cache.invalidate();
@@ -390,8 +383,7 @@ where
 
     // Fast path: jump cache (per-CPU, no lock needed)
     if cur_phys != 0 {
-        if let Some(idx) = per_cpu.jump_cache.lookup(pc)
-        {
+        if let Some(idx) = per_cpu.jump_cache.lookup(pc) {
             let tb = shared.tb_store.get(idx);
             if !tb.invalid.load(Ordering::Acquire)
                 && tb.pc == pc
@@ -404,9 +396,7 @@ where
         }
 
         // Slow path: hash table.
-        if let Some(idx) =
-            shared.tb_store.lookup(pc, flags)
-        {
+        if let Some(idx) = shared.tb_store.lookup(pc, flags) {
             let tb = shared.tb_store.get(idx);
             if tb.phys_pc == cur_phys {
                 per_cpu.jump_cache.insert(pc, idx);
@@ -449,8 +439,7 @@ where
 
     // SAFETY: we hold translate_lock, so exclusive access to
     // tbs Vec and code_buf emit methods.
-    let tb_idx =
-        unsafe { shared.tb_store.alloc(pc, flags, 0) }?;
+    let tb_idx = unsafe { shared.tb_store.alloc(pc, flags, 0) }?;
 
     guard.ir_ctx.reset();
     guard.ir_ctx.tb_idx = tb_idx as u32;

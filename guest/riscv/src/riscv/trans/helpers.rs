@@ -10,10 +10,7 @@
 /// RV64 signed division: div-by-zero -> -1,
 /// MIN/-1 -> MIN.
 #[no_mangle]
-pub extern "C" fn helper_divs64(
-    a: i64,
-    b: i64,
-) -> i64 {
+pub extern "C" fn helper_divs64(a: i64, b: i64) -> i64 {
     if b == 0 {
         -1
     } else if a == i64::MIN && b == -1 {
@@ -26,10 +23,7 @@ pub extern "C" fn helper_divs64(
 /// RV64 signed remainder: div-by-zero -> a,
 /// MIN/-1 -> 0.
 #[no_mangle]
-pub extern "C" fn helper_rems64(
-    a: i64,
-    b: i64,
-) -> i64 {
+pub extern "C" fn helper_rems64(a: i64, b: i64) -> i64 {
     if b == 0 {
         a
     } else if a == i64::MIN && b == -1 {
@@ -41,10 +35,7 @@ pub extern "C" fn helper_rems64(
 
 /// RV64 DIVW: 32-bit signed div, sign-extended to 64.
 #[no_mangle]
-pub extern "C" fn helper_divw64(
-    a: i64,
-    b: i64,
-) -> i64 {
+pub extern "C" fn helper_divw64(a: i64, b: i64) -> i64 {
     let a32 = a as i32;
     let b32 = b as i32;
     let r = if b32 == 0 {
@@ -59,10 +50,7 @@ pub extern "C" fn helper_divw64(
 
 /// RV64 REMW: 32-bit signed rem, sign-extended to 64.
 #[no_mangle]
-pub extern "C" fn helper_remw64(
-    a: i64,
-    b: i64,
-) -> i64 {
+pub extern "C" fn helper_remw64(a: i64, b: i64) -> i64 {
     let a32 = a as i32;
     let b32 = b as i32;
     let r = if b32 == 0 {
@@ -98,13 +86,11 @@ pub extern "C" fn helper_sc(
     let entry = cpu.mmu.tlb[idx];
     let tag = addr & super::super::mmu::PAGE_MASK;
     let addend = if entry.addr_write == tag
-        && entry.addend
-            != super::super::mmu::TLB_MMIO_ADDEND
+        && entry.addend != super::super::mmu::TLB_MMIO_ADDEND
     {
         entry.addend
     } else if entry.addr_read == tag
-        && entry.addend
-            != super::super::mmu::TLB_MMIO_ADDEND
+        && entry.addend != super::super::mmu::TLB_MMIO_ADDEND
     {
         // Write tag not set (e.g. clean page). Fall
         // back to read addend — same host mapping.
@@ -114,8 +100,7 @@ pub extern "C" fn helper_sc(
         // (works for M-mode / bare translation).
         cpu.guest_base as usize
     };
-    let host =
-        (addr as usize).wrapping_add(addend) as *mut u8;
+    let host = (addr as usize).wrapping_add(addend) as *mut u8;
     let current = unsafe {
         if size == 4 {
             (*(host as *const u32) as i32) as i64 as u64

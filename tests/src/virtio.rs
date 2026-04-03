@@ -26,10 +26,7 @@ fn make_test_device() -> (VirtioMmio, Arc<DummySink>) {
     let sink = Arc::new(DummySink {
         level: AtomicBool::new(false),
     });
-    let irq = IrqLine::new(
-        sink.clone() as Arc<dyn IrqSink>,
-        1,
-    );
+    let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
     let mmio = VirtioMmio::new(
         blk,
         irq,
@@ -76,11 +73,11 @@ fn test_virtio_interrupt_ack() {
     let (dev, sink) = make_test_device();
     // Manually trigger interrupt via write path.
     dev.write(0x070, 4, 0x0f); // status = DRIVER_OK
-    // Force interrupt by internal access is not
-    // possible without queue I/O, so test ACK path:
-    // First verify status reads back.
+                               // Force interrupt by internal access is not
+                               // possible without queue I/O, so test ACK path:
+                               // First verify status reads back.
     assert_eq!(dev.read(0x060, 4), 0); // no IRQ
-    // ACK with no pending is safe.
+                                       // ACK with no pending is safe.
     dev.write(0x064, 4, 1);
     assert_eq!(dev.read(0x060, 4), 0);
     assert!(!sink.level.load(Ordering::SeqCst));

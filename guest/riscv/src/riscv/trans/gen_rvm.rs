@@ -1,11 +1,10 @@
 //! RVM gen helpers: signed/unsigned division and remainder.
 
-use super::helpers::{
-    helper_divs64, helper_divw64, helper_rems64,
-    helper_remw64,
-};
 use super::super::insn_decode::*;
 use super::super::RiscvDisasContext;
+use super::helpers::{
+    helper_divs64, helper_divw64, helper_rems64, helper_remw64,
+};
 use machina_accel::ir::context::Context;
 use machina_accel::ir::types::{Cond, Type};
 
@@ -45,32 +44,20 @@ impl RiscvDisasContext {
         let one = ir.new_const(Type::I64, 1);
 
         let safe = ir.new_temp(Type::I64);
-        ir.gen_movcond(
-            Type::I64, safe, s2, zero, one, s2,
-            Cond::Eq,
-        );
+        ir.gen_movcond(Type::I64, safe, s2, zero, one, s2, Cond::Eq);
 
         let quot = ir.new_temp(Type::I64);
         let rem = ir.new_temp(Type::I64);
-        ir.gen_divu2(
-            Type::I64, quot, rem, s1, zero, safe,
-        );
+        ir.gen_divu2(Type::I64, quot, rem, s1, zero, safe);
 
         if want_rem {
             let r = ir.new_temp(Type::I64);
-            ir.gen_movcond(
-                Type::I64, r, s2, zero, s1, rem,
-                Cond::Eq,
-            );
+            ir.gen_movcond(Type::I64, r, s2, zero, s1, rem, Cond::Eq);
             self.gen_set_gpr(ir, a.rd, r);
         } else {
-            let neg1 =
-                ir.new_const(Type::I64, u64::MAX);
+            let neg1 = ir.new_const(Type::I64, u64::MAX);
             let r = ir.new_temp(Type::I64);
-            ir.gen_movcond(
-                Type::I64, r, s2, zero, neg1, quot,
-                Cond::Eq,
-            );
+            ir.gen_movcond(Type::I64, r, s2, zero, neg1, quot, Cond::Eq);
             self.gen_set_gpr(ir, a.rd, r);
         }
         true
@@ -114,32 +101,20 @@ impl RiscvDisasContext {
         let one = ir.new_const(Type::I32, 1);
 
         let safe = ir.new_temp(Type::I32);
-        ir.gen_movcond(
-            Type::I32, safe, b32, zero, one, b32,
-            Cond::Eq,
-        );
+        ir.gen_movcond(Type::I32, safe, b32, zero, one, b32, Cond::Eq);
 
         let quot = ir.new_temp(Type::I32);
         let rem = ir.new_temp(Type::I32);
-        ir.gen_divu2(
-            Type::I32, quot, rem, a32, zero, safe,
-        );
+        ir.gen_divu2(Type::I32, quot, rem, a32, zero, safe);
 
         if want_rem {
             let r = ir.new_temp(Type::I32);
-            ir.gen_movcond(
-                Type::I32, r, b32, zero, a32, rem,
-                Cond::Eq,
-            );
+            ir.gen_movcond(Type::I32, r, b32, zero, a32, rem, Cond::Eq);
             self.gen_set_gpr_sx32(ir, a.rd, r);
         } else {
-            let max =
-                ir.new_const(Type::I32, u32::MAX as u64);
+            let max = ir.new_const(Type::I32, u32::MAX as u64);
             let r = ir.new_temp(Type::I32);
-            ir.gen_movcond(
-                Type::I32, r, b32, zero, max, quot,
-                Cond::Eq,
-            );
+            ir.gen_movcond(Type::I32, r, b32, zero, max, quot, Cond::Eq);
             self.gen_set_gpr_sx32(ir, a.rd, r);
         }
         true

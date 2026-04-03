@@ -1,12 +1,8 @@
 // Float-to-float and float-to-int conversion tests.
 
-use machina_softfloat::env::{
-    ExcFlags, FloatEnv, RoundMode,
-};
+use machina_softfloat::env::{ExcFlags, FloatEnv, RoundMode};
 use machina_softfloat::ops::convert;
-use machina_softfloat::types::{
-    Float16, Float32, Float64,
-};
+use machina_softfloat::types::{Float16, Float32, Float64};
 
 fn env() -> FloatEnv {
     FloatEnv::new(RoundMode::NearEven)
@@ -57,9 +53,7 @@ fn f64_to_f32_inexact() {
     // 1.0000001 (has more precision than f32)
     let a = Float64::from_f64(1.0000001);
     let _b: Float32 = convert::convert(a, &mut e);
-    assert!(
-        e.flags().contains(ExcFlags::INEXACT)
-    );
+    assert!(e.flags().contains(ExcFlags::INEXACT));
 }
 
 // ── Float32 → int ───────────────────────────────────
@@ -137,16 +131,14 @@ fn i32_to_f32_simple() {
 #[test]
 fn i64_to_f32_large() {
     let mut e = env();
-    let v: Float32 =
-        convert::from_i64(1_000_000_000, &mut e);
+    let v: Float32 = convert::from_i64(1_000_000_000, &mut e);
     assert_eq!(v.to_f32(), 1.0e9);
 }
 
 #[test]
 fn u64_to_f64_max() {
     let mut e = env();
-    let v: Float64 =
-        convert::from_u64(u64::MAX, &mut e);
+    let v: Float64 = convert::from_u64(u64::MAX, &mut e);
     // u64::MAX ≈ 1.8446744e19
     assert!(v.to_f64() > 1.8e19);
 }

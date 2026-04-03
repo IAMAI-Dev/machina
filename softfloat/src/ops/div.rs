@@ -116,11 +116,7 @@ fn div_parts<F: FloatFormat>(
 /// Algorithm: ensure dividend >= divisor (adjust exp),
 /// then iterative trial subtraction to produce ~128 bits
 /// of quotient with integer bit at position 126.
-fn div_frac(
-    a_frac: u128,
-    b_frac: u128,
-    mut exp: i32,
-) -> (u128, i32) {
+fn div_frac(a_frac: u128, b_frac: u128, mut exp: i32) -> (u128, i32) {
     if b_frac == 0 {
         return (0, exp);
     }

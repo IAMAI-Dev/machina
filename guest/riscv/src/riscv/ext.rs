@@ -27,13 +27,8 @@ impl MisaExt {
     pub const U: Self = Self(1 << (b'U' - b'A'));
 
     /// G = IMAFD (general-purpose).
-    pub const G: Self = Self(
-        Self::I.0
-            | Self::M.0
-            | Self::A.0
-            | Self::F.0
-            | Self::D.0,
-    );
+    pub const G: Self =
+        Self(Self::I.0 | Self::M.0 | Self::A.0 | Self::F.0 | Self::D.0);
 
     #[inline]
     pub const fn bits(self) -> u32 {

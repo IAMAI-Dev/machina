@@ -1,8 +1,6 @@
 // IEEE 754 edge case tests: NaN, Inf, Zero, Subnormal.
 
-use machina_softfloat::env::{
-    ExcFlags, FloatEnv, RoundMode,
-};
+use machina_softfloat::env::{ExcFlags, FloatEnv, RoundMode};
 use machina_softfloat::types::Float32;
 
 fn env() -> FloatEnv {
@@ -121,7 +119,7 @@ fn f32_neg_div_zero_is_neg_inf() {
 fn f32_neg_zero_plus_pos_zero() {
     let mut e = env();
     let nz = Float32::from_bits(0x8000_0000); // -0
-    let pz = Float32::from_f32(0.0);           // +0
+    let pz = Float32::from_f32(0.0); // +0
     let c = nz.add(pz, &mut e);
     // IEEE 754: -0 + (+0) = +0 in RNE mode
     assert_eq!(c.to_bits(), 0x0000_0000);

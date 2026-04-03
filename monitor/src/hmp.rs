@@ -20,8 +20,7 @@ pub fn handle_line(
         return Some(String::new());
     }
 
-    let parts: Vec<&str> =
-        line.splitn(2, ' ').collect();
+    let parts: Vec<&str> = line.splitn(2, ' ').collect();
     let cmd = parts[0];
     let arg = parts.get(1).copied().unwrap_or("");
 
@@ -40,17 +39,11 @@ pub fn handle_line(
             None // signals exit
         }
         "help" | "?" => Some(help_text()),
-        _ => Some(format!(
-            "unknown command: '{}'\n",
-            cmd
-        )),
+        _ => Some(format!("unknown command: '{}'\n", cmd)),
     }
 }
 
-fn handle_info(
-    arg: &str,
-    svc: &Arc<Mutex<MonitorService>>,
-) -> Option<String> {
+fn handle_info(arg: &str, svc: &Arc<Mutex<MonitorService>>) -> Option<String> {
     let s = svc.lock().unwrap();
     match arg.trim() {
         "status" => {
@@ -81,16 +74,10 @@ fn handle_info(
                             out.push('\n');
                         }
                     }
-                    out.push_str(&format!(
-                        " pc  {:#018x}\n",
-                        snap.pc
-                    ));
+                    out.push_str(&format!(" pc  {:#018x}\n", snap.pc));
                     Some(out)
                 }
-                None => Some(
-                    "CPU snapshot not available\n"
-                        .into(),
-                ),
+                None => Some("CPU snapshot not available\n".into()),
             }
         }
         "cpus" => {
@@ -104,11 +91,7 @@ fn handle_info(
                         c.cpu_index
                     ));
                 } else {
-                    let state = if c.halted {
-                        "halted"
-                    } else {
-                        "stopped"
-                    };
+                    let state = if c.halted { "halted" } else { "stopped" };
                     out.push_str(&format!(
                         "* CPU #{}: pc={:#x} ({})\n",
                         c.cpu_index, c.pc, state
@@ -117,10 +100,7 @@ fn handle_info(
             }
             Some(out)
         }
-        _ => Some(format!(
-            "info: unknown subcommand '{}'\n",
-            arg
-        )),
+        _ => Some(format!("info: unknown subcommand '{}'\n", arg)),
     }
 }
 

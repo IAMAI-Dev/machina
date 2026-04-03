@@ -62,7 +62,12 @@ impl TbStore {
     /// # Safety
     /// Caller must hold the translate_lock to ensure exclusive
     /// write access to the tbs Vec.
-    pub unsafe fn alloc(&self, pc: u64, flags: u32, cflags: u32) -> Option<usize> {
+    pub unsafe fn alloc(
+        &self,
+        pc: u64,
+        flags: u32,
+        cflags: u32,
+    ) -> Option<usize> {
         let tbs = &mut *self.tbs.get();
         let idx = tbs.len();
         if idx >= MAX_TBS {
@@ -281,8 +286,7 @@ impl TbStore {
         let idx = (phys_page as usize) / 8;
         let bit = (phys_page as usize) % 8;
         if idx < self.code_pages.len() {
-            self.code_pages[idx]
-                .fetch_or(1u8 << bit, Ordering::Relaxed);
+            self.code_pages[idx].fetch_or(1u8 << bit, Ordering::Relaxed);
         }
     }
 
@@ -292,10 +296,7 @@ impl TbStore {
         let idx = (phys_page as usize) / 8;
         let bit = (phys_page as usize) % 8;
         if idx < self.code_pages.len() {
-            self.code_pages[idx]
-                .load(Ordering::Relaxed)
-                & (1u8 << bit)
-                != 0
+            self.code_pages[idx].load(Ordering::Relaxed) & (1u8 << bit) != 0
         } else {
             false
         }

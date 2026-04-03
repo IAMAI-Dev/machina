@@ -57,9 +57,7 @@ impl VirtQueue {
         ram_base: u64,
         ram_size: u64,
     ) -> Option<Desc> {
-        let addr = self
-            .desc_addr
-            .checked_add((idx as u64) * 16)?;
+        let addr = self.desc_addr.checked_add((idx as u64) * 16)?;
         let off = addr.checked_sub(ram_base)?;
         if off.checked_add(16)? > ram_size {
             return None;
@@ -68,12 +66,9 @@ impl VirtQueue {
         Some(unsafe {
             Desc {
                 addr: (p as *const u64).read_unaligned(),
-                len: (p.add(8) as *const u32)
-                    .read_unaligned(),
-                flags: (p.add(12) as *const u16)
-                    .read_unaligned(),
-                next: (p.add(14) as *const u16)
-                    .read_unaligned(),
+                len: (p.add(8) as *const u32).read_unaligned(),
+                flags: (p.add(12) as *const u16).read_unaligned(),
+                next: (p.add(14) as *const u16).read_unaligned(),
             }
         })
     }
@@ -100,10 +95,7 @@ impl VirtQueue {
         if off + 2 > ram_size {
             return self.last_avail_idx;
         }
-        unsafe {
-            (ram.add(off as usize) as *const u16)
-                .read_unaligned()
-        }
+        unsafe { (ram.add(off as usize) as *const u16).read_unaligned() }
     }
 
     /// Read an entry from the available ring.
@@ -126,10 +118,7 @@ impl VirtQueue {
         if off + 2 > ram_size {
             return 0;
         }
-        unsafe {
-            (ram.add(off as usize) as *const u16)
-                .read_unaligned()
-        }
+        unsafe { (ram.add(off as usize) as *const u16).read_unaligned() }
     }
 
     /// Write an entry to the used ring.
@@ -179,8 +168,7 @@ impl VirtQueue {
             return;
         }
         unsafe {
-            (ram.add(off as usize) as *mut u16)
-                .write_unaligned(idx);
+            (ram.add(off as usize) as *mut u16).write_unaligned(idx);
         }
     }
 
@@ -198,9 +186,7 @@ impl VirtQueue {
         let mut idx = head;
         let limit = self.num as usize;
         for _ in 0..limit {
-            let desc = match self.read_desc(
-                idx, ram, ram_base, ram_size,
-            ) {
+            let desc = match self.read_desc(idx, ram, ram_base, ram_size) {
                 Some(d) => d,
                 None => break,
             };
@@ -213,4 +199,3 @@ impl VirtQueue {
         chain
     }
 }
-

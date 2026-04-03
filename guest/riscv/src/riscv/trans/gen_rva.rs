@@ -1,12 +1,10 @@
 //! RVA gen helpers: atomic load-reserved / store-conditional,
 //! AMO read-modify-write, swap, min/max.
 
-use super::gen_common::{
-    BinOp, TCG_BAR_LDAQ, TCG_BAR_STRL, TCG_MO_ALL,
-};
-use super::helpers::helper_sc;
 use super::super::insn_decode::*;
 use super::super::RiscvDisasContext;
+use super::gen_common::{BinOp, TCG_BAR_LDAQ, TCG_BAR_STRL, TCG_MO_ALL};
+use super::helpers::helper_sc;
 use machina_accel::ir::context::Context;
 use machina_accel::ir::types::{Cond, MemOp, Type};
 
@@ -25,9 +23,7 @@ impl RiscvDisasContext {
         }
         self.sync_pc(ir);
         let val = ir.new_temp(Type::I64);
-        ir.gen_qemu_ld(
-            Type::I64, val, addr, memop.bits() as u32,
-        );
+        ir.gen_qemu_ld(Type::I64, val, addr, memop.bits() as u32);
         if a.aq != 0 {
             ir.gen_mb(TCG_MO_ALL | TCG_BAR_LDAQ);
         }
@@ -55,10 +51,7 @@ impl RiscvDisasContext {
         let addr = self.gpr_or_zero(ir, a.rs1);
         let src2 = self.gpr_or_zero(ir, a.rs2);
         self.sync_pc(ir);
-        let is_word = ir.new_const(
-            Type::I64,
-            memop.size_bytes() as u64,
-        );
+        let is_word = ir.new_const(Type::I64, memop.size_bytes() as u64);
         let r = ir.new_temp(Type::I64);
         ir.gen_call(
             r,
@@ -88,15 +81,11 @@ impl RiscvDisasContext {
         }
         self.sync_pc(ir);
         let old = ir.new_temp(Type::I64);
-        ir.gen_qemu_ld(
-            Type::I64, old, addr, memop.bits() as u32,
-        );
+        ir.gen_qemu_ld(Type::I64, old, addr, memop.bits() as u32);
         let src2 = self.gpr_or_zero(ir, a.rs2);
         let new = ir.new_temp(Type::I64);
         op(ir, Type::I64, new, old, src2);
-        ir.gen_qemu_st(
-            Type::I64, new, addr, memop.bits() as u32,
-        );
+        ir.gen_qemu_st(Type::I64, new, addr, memop.bits() as u32);
         if a.aq != 0 {
             ir.gen_mb(TCG_MO_ALL | TCG_BAR_LDAQ);
         }
@@ -118,14 +107,9 @@ impl RiscvDisasContext {
         }
         self.sync_pc(ir);
         let old = ir.new_temp(Type::I64);
-        ir.gen_qemu_ld(
-            Type::I64, old, addr, memop.bits() as u32,
-        );
+        ir.gen_qemu_ld(Type::I64, old, addr, memop.bits() as u32);
         let src2 = self.gpr_or_zero(ir, a.rs2);
-        ir.gen_qemu_st(
-            Type::I64, src2, addr,
-            memop.bits() as u32,
-        );
+        ir.gen_qemu_st(Type::I64, src2, addr, memop.bits() as u32);
         if a.aq != 0 {
             ir.gen_mb(TCG_MO_ALL | TCG_BAR_LDAQ);
         }
@@ -148,9 +132,7 @@ impl RiscvDisasContext {
         }
         self.sync_pc(ir);
         let old = ir.new_temp(Type::I64);
-        ir.gen_qemu_ld(
-            Type::I64, old, addr, memop.bits() as u32,
-        );
+        ir.gen_qemu_ld(Type::I64, old, addr, memop.bits() as u32);
         let src2 = self.gpr_or_zero(ir, a.rs2);
 
         // For 32-bit AMO, truncate src2 to 32 bits and
@@ -173,9 +155,7 @@ impl RiscvDisasContext {
 
         // For unsigned 32-bit cmp, also zero-extend old
         // (which was sign-extended by the load).
-        let cmp_old = if is_32
-            && (cond == Cond::Ltu || cond == Cond::Gtu)
-        {
+        let cmp_old = if is_32 && (cond == Cond::Ltu || cond == Cond::Gtu) {
             let t = ir.new_temp(Type::I64);
             let t32 = ir.new_temp(Type::I32);
             ir.gen_extrl_i64_i32(t32, old);
@@ -186,13 +166,8 @@ impl RiscvDisasContext {
         };
 
         let new = ir.new_temp(Type::I64);
-        ir.gen_movcond(
-            Type::I64, new, cmp_old, cmp_src2, old,
-            src2, cond,
-        );
-        ir.gen_qemu_st(
-            Type::I64, new, addr, memop.bits() as u32,
-        );
+        ir.gen_movcond(Type::I64, new, cmp_old, cmp_src2, old, src2, cond);
+        ir.gen_qemu_st(Type::I64, new, addr, memop.bits() as u32);
         if a.aq != 0 {
             ir.gen_mb(TCG_MO_ALL | TCG_BAR_LDAQ);
         }

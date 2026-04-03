@@ -92,9 +92,7 @@ impl VirtioMmioState {
         self.irq.set(false);
     }
 
-    fn current_queue(
-        &mut self,
-    ) -> Option<&mut VirtQueue> {
+    fn current_queue(&mut self) -> Option<&mut VirtQueue> {
         let sel = self.queue_sel as usize;
         self.queues.get_mut(sel)
     }
@@ -149,9 +147,7 @@ impl VirtioMmio {
                 driver_features_sel: 0,
                 driver_features: 0,
                 queue_sel: 0,
-                queues: std::array::from_fn(|_| {
-                    VirtQueue::new()
-                }),
+                queues: std::array::from_fn(|_| VirtQueue::new()),
                 interrupt_status: 0,
                 guest_page_size: 0,
                 ram_ptr,
@@ -179,19 +175,12 @@ impl MmioOps for VirtioMmio {
                     (feat >> 32) & 0xFFFF_FFFF
                 }
             }
-            QUEUE_NUM_MAX => {
-                MAX_QUEUE_SIZE as u64
-            }
+            QUEUE_NUM_MAX => MAX_QUEUE_SIZE as u64,
             QUEUE_READY => {
                 let sel = s.queue_sel as usize;
-                s.queues
-                    .get(sel)
-                    .map(|q| q.ready as u64)
-                    .unwrap_or(0)
+                s.queues.get(sel).map(|q| q.ready as u64).unwrap_or(0)
             }
-            INTERRUPT_STATUS => {
-                s.interrupt_status as u64
-            }
+            INTERRUPT_STATUS => s.interrupt_status as u64,
             STATUS => s.status as u64,
             CONFIG_GENERATION => 0,
             // Legacy: queue PFN.
@@ -201,8 +190,7 @@ impl MmioOps for VirtioMmio {
                     .get(sel)
                     .map(|q| {
                         if s.guest_page_size > 0 {
-                            q.desc_addr
-                                / s.guest_page_size as u64
+                            q.desc_addr / s.guest_page_size as u64
                         } else {
                             0
                         }
@@ -210,8 +198,7 @@ impl MmioOps for VirtioMmio {
                     .unwrap_or(0)
             }
             o if o >= CONFIG_BASE => {
-                s.device
-                    .config_read(o - CONFIG_BASE, size)
+                s.device.config_read(o - CONFIG_BASE, size)
             }
             _ => 0,
         }
@@ -275,43 +262,37 @@ impl MmioOps for VirtioMmio {
             }
             QUEUE_DESC_LOW => {
                 if let Some(q) = s.current_queue() {
-                    q.desc_addr = (q.desc_addr
-                        & 0xFFFF_FFFF_0000_0000)
-                        | (v32 as u64);
+                    q.desc_addr =
+                        (q.desc_addr & 0xFFFF_FFFF_0000_0000) | (v32 as u64);
                 }
             }
             QUEUE_DESC_HIGH => {
                 if let Some(q) = s.current_queue() {
-                    q.desc_addr = (q.desc_addr
-                        & 0x0000_0000_FFFF_FFFF)
+                    q.desc_addr = (q.desc_addr & 0x0000_0000_FFFF_FFFF)
                         | ((v32 as u64) << 32);
                 }
             }
             QUEUE_AVAIL_LOW => {
                 if let Some(q) = s.current_queue() {
-                    q.avail_addr = (q.avail_addr
-                        & 0xFFFF_FFFF_0000_0000)
-                        | (v32 as u64);
+                    q.avail_addr =
+                        (q.avail_addr & 0xFFFF_FFFF_0000_0000) | (v32 as u64);
                 }
             }
             QUEUE_AVAIL_HIGH => {
                 if let Some(q) = s.current_queue() {
-                    q.avail_addr = (q.avail_addr
-                        & 0x0000_0000_FFFF_FFFF)
+                    q.avail_addr = (q.avail_addr & 0x0000_0000_FFFF_FFFF)
                         | ((v32 as u64) << 32);
                 }
             }
             QUEUE_USED_LOW => {
                 if let Some(q) = s.current_queue() {
-                    q.used_addr = (q.used_addr
-                        & 0xFFFF_FFFF_0000_0000)
-                        | (v32 as u64);
+                    q.used_addr =
+                        (q.used_addr & 0xFFFF_FFFF_0000_0000) | (v32 as u64);
                 }
             }
             QUEUE_USED_HIGH => {
                 if let Some(q) = s.current_queue() {
-                    q.used_addr = (q.used_addr
-                        & 0x0000_0000_FFFF_FFFF)
+                    q.used_addr = (q.used_addr & 0x0000_0000_FFFF_FFFF)
                         | ((v32 as u64) << 32);
                 }
             }
@@ -326,17 +307,15 @@ impl MmioOps for VirtioMmio {
                     if v32 == 0 {
                         q.reset();
                     } else if gps > 0 {
-                        let base =
-                            (v32 as u64) * (gps as u64);
+                        let base = (v32 as u64) * (gps as u64);
                         q.desc_addr = base;
                         let align = gps as u64;
-                        let avail_off =
-                            (q.num as u64) * 16;
+                        let avail_off = (q.num as u64) * 16;
                         q.avail_addr = base + avail_off;
-                        let used_off = (base
-                            + avail_off
-                            + 6 + (q.num as u64) * 2).div_ceil(align)
-                            * align;
+                        let used_off =
+                            (base + avail_off + 6 + (q.num as u64) * 2)
+                                .div_ceil(align)
+                                * align;
                         q.used_addr = used_off;
                         q.ready = true;
                     }
@@ -350,4 +329,3 @@ impl MmioOps for VirtioMmio {
         }
     }
 }
-

@@ -80,6 +80,7 @@ const MSTATUS_MXR: u64 = 1 << 19;
 const MSTATUS_TVM: u64 = 1 << 20;
 const MSTATUS_TW: u64 = 1 << 21;
 const MSTATUS_TSR: u64 = 1 << 22;
+const MSTATUS_UXL: u64 = 3 << 32;
 const MSTATUS_SD: u64 = 1 << 63;
 
 /// UXL=2 (64-bit) and SXL=2 (64-bit) for RV64.

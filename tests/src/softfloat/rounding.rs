@@ -15,11 +15,9 @@ fn env_rm(rm: RoundMode) -> FloatEnv {
 fn rne_f32_to_i32_half_to_even() {
     let mut e = env_rm(RoundMode::NearEven);
     // 2.5 → 2 (even), 3.5 → 4 (even)
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(2.5), &mut e), 2);
+    assert_eq!(convert::to_i32(Float32::from_f32(2.5), &mut e), 2);
     e.clear_flags();
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(3.5), &mut e), 4);
+    assert_eq!(convert::to_i32(Float32::from_f32(3.5), &mut e), 4);
 }
 
 // ── RTZ: Round towards Zero ─────────────────────────
@@ -27,11 +25,9 @@ fn rne_f32_to_i32_half_to_even() {
 #[test]
 fn rtz_f32_to_i32_truncates() {
     let mut e = env_rm(RoundMode::ToZero);
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(2.9), &mut e), 2);
+    assert_eq!(convert::to_i32(Float32::from_f32(2.9), &mut e), 2);
     e.clear_flags();
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(-2.9), &mut e), -2);
+    assert_eq!(convert::to_i32(Float32::from_f32(-2.9), &mut e), -2);
 }
 
 // ── RDN: Round Down (towards -inf) ──────────────────
@@ -39,11 +35,9 @@ fn rtz_f32_to_i32_truncates() {
 #[test]
 fn rdn_f32_to_i32_floor() {
     let mut e = env_rm(RoundMode::Down);
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(2.1), &mut e), 2);
+    assert_eq!(convert::to_i32(Float32::from_f32(2.1), &mut e), 2);
     e.clear_flags();
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(-2.1), &mut e), -3);
+    assert_eq!(convert::to_i32(Float32::from_f32(-2.1), &mut e), -3);
 }
 
 // ── RUP: Round Up (towards +inf) ────────────────────
@@ -51,11 +45,9 @@ fn rdn_f32_to_i32_floor() {
 #[test]
 fn rup_f32_to_i32_ceil() {
     let mut e = env_rm(RoundMode::Up);
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(2.1), &mut e), 3);
+    assert_eq!(convert::to_i32(Float32::from_f32(2.1), &mut e), 3);
     e.clear_flags();
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(-2.1), &mut e), -2);
+    assert_eq!(convert::to_i32(Float32::from_f32(-2.1), &mut e), -2);
 }
 
 // ── RMM: Round to Nearest, ties to Max Magnitude ────
@@ -64,11 +56,9 @@ fn rup_f32_to_i32_ceil() {
 fn rmm_f32_to_i32_half_away() {
     let mut e = env_rm(RoundMode::NearMaxMag);
     // 2.5 → 3 (away from zero), -2.5 → -3
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(2.5), &mut e), 3);
+    assert_eq!(convert::to_i32(Float32::from_f32(2.5), &mut e), 3);
     e.clear_flags();
-    assert_eq!(convert::to_i32(
-        Float32::from_f32(-2.5), &mut e), -3);
+    assert_eq!(convert::to_i32(Float32::from_f32(-2.5), &mut e), -3);
 }
 
 // ── RMM vs RNE on 0.5 ──────────────────────────────

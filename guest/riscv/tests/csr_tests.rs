@@ -10,7 +10,10 @@ fn test_mstatus_read_write() {
 
     // RV64 reads back UXL=2 and SXL=2.
     let v = cpu.csr_read(CSR_MSTATUS);
-    assert_eq!(v & ((3u64 << 32) | (3u64 << 34)), (2u64 << 32) | (2u64 << 34));
+    assert_eq!(
+        v & ((3u64 << 32) | (3u64 << 34)),
+        (2u64 << 32) | (2u64 << 34)
+    );
 
     // Write MIE (bit 3) + MPIE (bit 7).
     cpu.csr_write(CSR_MSTATUS, (1 << 3) | (1 << 7));

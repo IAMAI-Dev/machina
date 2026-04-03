@@ -74,15 +74,11 @@ fn make_env(cpu: &RiscvCpu, rm: u64) -> Option<FloatEnv> {
 
 /// Create a FloatEnv, falling back to RNE + INVALID on
 /// illegal rm.
-fn make_env_or_invalid(
-    cpu: &mut RiscvCpu,
-    rm: u64,
-) -> FloatEnv {
+fn make_env_or_invalid(cpu: &mut RiscvCpu, rm: u64) -> FloatEnv {
     match make_env(cpu, rm) {
         Some(e) => e,
         None => {
-            cpu.fflags =
-                (cpu.fflags | FFLAGS_NV) & FFLAGS_MASK;
+            cpu.fflags = (cpu.fflags | FFLAGS_NV) & FFLAGS_MASK;
             let mut e = FloatEnv::new(RoundMode::NearEven);
             e.set_default_nan(true);
             e
@@ -265,11 +261,7 @@ pub extern "C" fn helper_fdiv_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fsqrt_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fsqrt_s(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
     let res = unbox_f32(a).sqrt(&mut fe);
@@ -291,8 +283,7 @@ pub extern "C" fn helper_fmadd_s(
 ) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res =
-        unbox_f32(a).fma(unbox_f32(b), unbox_f32(c), &mut fe);
+    let res = unbox_f32(a).fma(unbox_f32(b), unbox_f32(c), &mut fe);
     commit_flags(cpu, &fe);
     nanbox(res.to_bits())
 }
@@ -351,11 +342,7 @@ pub extern "C" fn helper_fnmadd_s(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fsgnj_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fsgnj_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let _ = env;
     let ab = unbox_f32(a).to_bits();
     let bb = unbox_f32(b).to_bits();
@@ -364,11 +351,7 @@ pub extern "C" fn helper_fsgnj_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fsgnjn_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fsgnjn_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let _ = env;
     let ab = unbox_f32(a).to_bits();
     let bb = unbox_f32(b).to_bits();
@@ -377,11 +360,7 @@ pub extern "C" fn helper_fsgnjn_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fsgnjx_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fsgnjx_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let _ = env;
     let ab = unbox_f32(a).to_bits();
     let bb = unbox_f32(b).to_bits();
@@ -394,11 +373,7 @@ pub extern "C" fn helper_fsgnjx_s(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fmin_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fmin_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -408,11 +383,7 @@ pub extern "C" fn helper_fmin_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fmax_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fmax_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -426,11 +397,7 @@ pub extern "C" fn helper_fmax_s(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_feq_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_feq_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -440,11 +407,7 @@ pub extern "C" fn helper_feq_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_flt_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_flt_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -454,11 +417,7 @@ pub extern "C" fn helper_flt_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fle_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fle_s(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -472,10 +431,7 @@ pub extern "C" fn helper_fle_s(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fclass_s(
-    env: *mut RiscvCpu,
-    a: u64,
-) -> u64 {
+pub extern "C" fn helper_fclass_s(env: *mut RiscvCpu, a: u64) -> u64 {
     let _ = env;
     fclass_f32(unbox_f32(a).to_bits())
 }
@@ -485,11 +441,7 @@ pub extern "C" fn helper_fclass_s(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_w_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_w_s(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
     let val: i32 = convert::to_i32(unbox_f32(a), &mut fe);
@@ -498,11 +450,7 @@ pub extern "C" fn helper_fcvt_w_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_wu_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_wu_s(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
     let val: u32 = convert::to_u32(unbox_f32(a), &mut fe);
@@ -511,11 +459,7 @@ pub extern "C" fn helper_fcvt_wu_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_l_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_l_s(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
     let val: i64 = convert::to_i64(unbox_f32(a), &mut fe);
@@ -524,11 +468,7 @@ pub extern "C" fn helper_fcvt_l_s(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_lu_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_lu_s(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
     let val: u64 = convert::to_u64(unbox_f32(a), &mut fe);
@@ -541,53 +481,34 @@ pub extern "C" fn helper_fcvt_lu_s(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_s_w(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_s_w(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res: Float32 =
-        convert::from_i32(a as i32, &mut fe);
+    let res: Float32 = convert::from_i32(a as i32, &mut fe);
     commit_flags(cpu, &fe);
     nanbox(res.to_bits())
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_s_wu(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_s_wu(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res: Float32 =
-        convert::from_u32(a as u32, &mut fe);
+    let res: Float32 = convert::from_u32(a as u32, &mut fe);
     commit_flags(cpu, &fe);
     nanbox(res.to_bits())
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_s_l(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_s_l(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res: Float32 =
-        convert::from_i64(a as i64, &mut fe);
+    let res: Float32 = convert::from_i64(a as i64, &mut fe);
     commit_flags(cpu, &fe);
     nanbox(res.to_bits())
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_s_lu(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_s_lu(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
     let res: Float32 = convert::from_u64(a, &mut fe);
@@ -668,11 +589,7 @@ pub extern "C" fn helper_fdiv_d(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fsqrt_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fsqrt_d(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
     let res = Float64::from_bits(a).sqrt(&mut fe);
@@ -761,31 +678,19 @@ pub extern "C" fn helper_fnmadd_d(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fsgnj_d(
-    _env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fsgnj_d(_env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let sign = b & (1u64 << 63);
     (a & !(1u64 << 63)) | sign
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fsgnjn_d(
-    _env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fsgnjn_d(_env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let sign = (!b) & (1u64 << 63);
     (a & !(1u64 << 63)) | sign
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fsgnjx_d(
-    _env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fsgnjx_d(_env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let sign = (a ^ b) & (1u64 << 63);
     (a & !(1u64 << 63)) | sign
 }
@@ -795,11 +700,7 @@ pub extern "C" fn helper_fsgnjx_d(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fmin_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fmin_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -811,11 +712,7 @@ pub extern "C" fn helper_fmin_d(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fmax_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fmax_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -831,11 +728,7 @@ pub extern "C" fn helper_fmax_d(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_feq_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_feq_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -847,11 +740,7 @@ pub extern "C" fn helper_feq_d(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_flt_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_flt_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -863,11 +752,7 @@ pub extern "C" fn helper_flt_d(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fle_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    b: u64,
-) -> u64 {
+pub extern "C" fn helper_fle_d(env: *mut RiscvCpu, a: u64, b: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = FloatEnv::new(RoundMode::NearEven);
     fe.set_default_nan(true);
@@ -883,10 +768,7 @@ pub extern "C" fn helper_fle_d(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fclass_d(
-    env: *mut RiscvCpu,
-    a: u64,
-) -> u64 {
+pub extern "C" fn helper_fclass_d(env: *mut RiscvCpu, a: u64) -> u64 {
     let _ = env;
     fclass_f64(a)
 }
@@ -896,57 +778,37 @@ pub extern "C" fn helper_fclass_d(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_w_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_w_d(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let val: i32 =
-        convert::to_i32(Float64::from_bits(a), &mut fe);
+    let val: i32 = convert::to_i32(Float64::from_bits(a), &mut fe);
     commit_flags(cpu, &fe);
     val as i64 as u64
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_wu_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_wu_d(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let val: u32 =
-        convert::to_u32(Float64::from_bits(a), &mut fe);
+    let val: u32 = convert::to_u32(Float64::from_bits(a), &mut fe);
     commit_flags(cpu, &fe);
     val as i32 as i64 as u64
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_l_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_l_d(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let val: i64 =
-        convert::to_i64(Float64::from_bits(a), &mut fe);
+    let val: i64 = convert::to_i64(Float64::from_bits(a), &mut fe);
     commit_flags(cpu, &fe);
     val as u64
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_lu_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_lu_d(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let val: u64 =
-        convert::to_u64(Float64::from_bits(a), &mut fe);
+    let val: u64 = convert::to_u64(Float64::from_bits(a), &mut fe);
     commit_flags(cpu, &fe);
     val
 }
@@ -956,53 +818,34 @@ pub extern "C" fn helper_fcvt_lu_d(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_d_w(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_d_w(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res: Float64 =
-        convert::from_i32(a as i32, &mut fe);
+    let res: Float64 = convert::from_i32(a as i32, &mut fe);
     commit_flags(cpu, &fe);
     res.to_bits()
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_d_wu(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_d_wu(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res: Float64 =
-        convert::from_u32(a as u32, &mut fe);
+    let res: Float64 = convert::from_u32(a as u32, &mut fe);
     commit_flags(cpu, &fe);
     res.to_bits()
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_d_l(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_d_l(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res: Float64 =
-        convert::from_i64(a as i64, &mut fe);
+    let res: Float64 = convert::from_i64(a as i64, &mut fe);
     commit_flags(cpu, &fe);
     res.to_bits()
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_d_lu(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_d_lu(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
     let res: Float64 = convert::from_u64(a, &mut fe);
@@ -1015,29 +858,19 @@ pub extern "C" fn helper_fcvt_d_lu(
 // ---------------------------------------------------------------
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_s_d(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_s_d(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res: Float32 =
-        convert::convert(Float64::from_bits(a), &mut fe);
+    let res: Float32 = convert::convert(Float64::from_bits(a), &mut fe);
     commit_flags(cpu, &fe);
     nanbox(res.to_bits())
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcvt_d_s(
-    env: *mut RiscvCpu,
-    a: u64,
-    rm: u64,
-) -> u64 {
+pub extern "C" fn helper_fcvt_d_s(env: *mut RiscvCpu, a: u64, rm: u64) -> u64 {
     let cpu = unsafe { &mut *env };
     let mut fe = make_env_or_invalid(cpu, rm);
-    let res: Float64 =
-        convert::convert(unbox_f32(a), &mut fe);
+    let res: Float64 = convert::convert(unbox_f32(a), &mut fe);
     commit_flags(cpu, &fe);
     res.to_bits()
 }
@@ -1047,9 +880,7 @@ pub extern "C" fn helper_fcvt_d_s(
 // ===============================================================
 
 #[no_mangle]
-pub extern "C" fn helper_fcsr_read(
-    env: *mut RiscvCpu,
-) -> u64 {
+pub extern "C" fn helper_fcsr_read(env: *mut RiscvCpu) -> u64 {
     let env = unsafe { &mut *env };
     let fflags = env.fflags & FFLAGS_MASK;
     let frm = env.frm & FRM_MASK;
@@ -1057,13 +888,10 @@ pub extern "C" fn helper_fcsr_read(
 }
 
 #[no_mangle]
-pub extern "C" fn helper_fcsr_write(
-    env: *mut RiscvCpu,
-    val: u64,
-) -> u64 {
+pub extern "C" fn helper_fcsr_write(env: *mut RiscvCpu, val: u64) -> u64 {
     let env = unsafe { &mut *env };
-    let old = (env.fflags & FFLAGS_MASK)
-        | ((env.frm & FRM_MASK) << FCSR_RD_SHIFT);
+    let old =
+        (env.fflags & FFLAGS_MASK) | ((env.frm & FRM_MASK) << FCSR_RD_SHIFT);
     env.fflags = val & FFLAGS_MASK;
     env.frm = (val >> FCSR_RD_SHIFT) & FRM_MASK;
     old

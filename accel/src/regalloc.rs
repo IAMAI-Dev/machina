@@ -322,10 +322,7 @@ fn regalloc_call(
 
     for i in 0..nb_iargs {
         let tidx = op.args[nb_oargs + i];
-        let target = ct.args[nb_oargs + i]
-            .regs
-            .first()
-            .unwrap();
+        let target = ct.args[nb_oargs + i].regs.first().unwrap();
         let temp = ctx.temp(tidx);
         match temp.val_type {
             TempVal::Reg => {
@@ -362,17 +359,12 @@ fn regalloc_call(
             let m = &moves[mi];
             // Check if m.dst is a source of any
             // remaining undone move.
-            let blocked = moves.iter().enumerate().any(
-                |(j, other)| {
-                    !done[j]
-                        && j != mi
-                        && other.src == m.dst
-                },
-            );
+            let blocked = moves
+                .iter()
+                .enumerate()
+                .any(|(j, other)| !done[j] && j != mi && other.src == m.dst);
             if !blocked {
-                backend.tcg_out_mov(
-                    buf, m.ty, m.dst, m.src,
-                );
+                backend.tcg_out_mov(buf, m.ty, m.dst, m.src);
                 done[mi] = true;
                 progress = true;
             }
@@ -389,17 +381,14 @@ fn regalloc_call(
         // Follow the cycle from m.dst.
         let mut cur_dst = m.dst;
         loop {
-            let next = moves.iter().enumerate().find(
-                |(j, other)| {
-                    !done[*j] && other.src == cur_dst
-                },
-            );
+            let next = moves
+                .iter()
+                .enumerate()
+                .find(|(j, other)| !done[*j] && other.src == cur_dst);
             match next {
                 Some((j, _)) => {
                     let n = &moves[j];
-                    backend.tcg_out_mov(
-                        buf, n.ty, n.dst, n.src,
-                    );
+                    backend.tcg_out_mov(buf, n.ty, n.dst, n.src);
                     done[j] = true;
                     cur_dst = n.dst;
                 }
@@ -414,14 +403,11 @@ fn regalloc_call(
         let temp = ctx.temp(tidx);
         match temp.val_type {
             TempVal::Const => {
-                backend.tcg_out_movi(
-                    buf, temp.ty, target, temp.val,
-                );
+                backend.tcg_out_movi(buf, temp.ty, target, temp.val);
             }
             TempVal::Mem => {
                 if let Some(base_idx) = temp.mem_base {
-                    let base_reg =
-                        ctx.temp(base_idx).reg.unwrap();
+                    let base_reg = ctx.temp(base_idx).reg.unwrap();
                     backend.tcg_out_ld(
                         buf,
                         temp.ty,
@@ -430,8 +416,7 @@ fn regalloc_call(
                         temp.mem_offset,
                     );
                 } else if temp.mem_allocated {
-                    let frame_reg =
-                        ctx.frame_reg.unwrap();
+                    let frame_reg = ctx.frame_reg.unwrap();
                     backend.tcg_out_ld(
                         buf,
                         temp.ty,
@@ -442,9 +427,7 @@ fn regalloc_call(
                 }
             }
             TempVal::Dead => {
-                backend.tcg_out_movi(
-                    buf, temp.ty, target, 0,
-                );
+                backend.tcg_out_movi(buf, temp.ty, target, 0);
             }
             TempVal::Reg => unreachable!(),
         }

@@ -95,10 +95,7 @@ fn test_mmp_query_status_running() {
 fn test_mmp_unknown_command() {
     let svc = make_svc();
     let resp = mmp::dispatch("nonexistent", &svc);
-    assert_eq!(
-        resp["error"]["class"],
-        "CommandNotFound"
-    );
+    assert_eq!(resp["error"]["class"], "CommandNotFound");
 }
 
 #[test]
@@ -119,9 +116,7 @@ fn test_mmp_quit() {
     let svc = make_svc();
     let resp = mmp::dispatch("quit", &svc);
     assert_eq!(resp["return"], serde_json::json!({}));
-    assert!(
-        svc.lock().unwrap().state.is_quit_requested()
-    );
+    assert!(svc.lock().unwrap().state.is_quit_requested());
 }
 
 // ── HMP tests ───────────────────────────────────────
@@ -130,21 +125,14 @@ fn test_mmp_quit() {
 fn test_hmp_info_status() {
     let svc = make_svc();
     let out = hmp::handle_line("info status", &svc);
-    assert_eq!(
-        out,
-        Some("VM status: running\n".to_string())
-    );
+    assert_eq!(out, Some("VM status: running\n".to_string()));
 }
 
 #[test]
 fn test_hmp_info_registers_requires_pause() {
     let svc = make_svc();
     let out = hmp::handle_line("info registers", &svc);
-    assert!(
-        out.as_ref()
-            .unwrap()
-            .contains("must be paused")
-    );
+    assert!(out.as_ref().unwrap().contains("must be paused"));
 }
 
 #[test]
@@ -159,11 +147,7 @@ fn test_hmp_help() {
 fn test_hmp_unknown_command() {
     let svc = make_svc();
     let out = hmp::handle_line("foobar", &svc);
-    assert!(
-        out.as_ref()
-            .unwrap()
-            .contains("unknown command")
-    );
+    assert!(out.as_ref().unwrap().contains("unknown command"));
 }
 
 #[test]
@@ -189,33 +173,22 @@ fn test_hmp_info_cpus() {
 
 // ── TCP socket-level tests ──────────────────────────
 
-fn read_json_line(
-    reader: &mut BufReader<TcpStream>,
-) -> serde_json::Value {
+fn read_json_line(reader: &mut BufReader<TcpStream>) -> serde_json::Value {
     let mut line = String::new();
     reader.read_line(&mut line).unwrap();
     serde_json::from_str(&line).unwrap()
 }
 
-fn send_cmd(
-    stream: &mut TcpStream,
-    cmd: &str,
-) {
-    writeln!(stream, "{{\"execute\":\"{}\"}}", cmd)
-        .unwrap();
+fn send_cmd(stream: &mut TcpStream, cmd: &str) {
+    writeln!(stream, "{{\"execute\":\"{}\"}}", cmd).unwrap();
     stream.flush().unwrap();
 }
 
 #[test]
 fn test_tcp_greeting_and_caps() {
     let state = Arc::new(MonitorState::new());
-    let svc = Arc::new(Mutex::new(
-        MonitorService::new(Arc::clone(&state)),
-    ));
-    let listener = std::net::TcpListener::bind(
-        "127.0.0.1:0",
-    )
-    .unwrap();
+    let svc = Arc::new(Mutex::new(MonitorService::new(Arc::clone(&state))));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
 
     let svc2 = Arc::clone(&svc);
@@ -225,19 +198,14 @@ fn test_tcp_greeting_and_caps() {
 
     let stream = TcpStream::connect(addr).unwrap();
     stream
-        .set_read_timeout(Some(
-            std::time::Duration::from_secs(3),
-        ))
+        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
         .unwrap();
-    let mut reader = BufReader::new(
-        stream.try_clone().unwrap(),
-    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = stream;
 
     // Read greeting.
     let greeting = read_json_line(&mut reader);
-    assert!(greeting["QMP"]["version"]["machina"]
-        .is_object());
+    assert!(greeting["QMP"]["version"]["machina"].is_object());
 
     // Send qmp_capabilities.
     send_cmd(&mut writer, "qmp_capabilities");
@@ -252,10 +220,7 @@ fn test_tcp_greeting_and_caps() {
     // Send unknown command.
     send_cmd(&mut writer, "nonexistent");
     let resp = read_json_line(&mut reader);
-    assert_eq!(
-        resp["error"]["class"],
-        "CommandNotFound"
-    );
+    assert_eq!(resp["error"]["class"], "CommandNotFound");
 
     // Quit.
     send_cmd(&mut writer, "quit");
@@ -268,13 +233,8 @@ fn test_tcp_greeting_and_caps() {
 #[test]
 fn test_tcp_pre_caps_rejection() {
     let state = Arc::new(MonitorState::new());
-    let svc = Arc::new(Mutex::new(
-        MonitorService::new(Arc::clone(&state)),
-    ));
-    let listener = std::net::TcpListener::bind(
-        "127.0.0.1:0",
-    )
-    .unwrap();
+    let svc = Arc::new(Mutex::new(MonitorService::new(Arc::clone(&state))));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
 
     let svc2 = Arc::clone(&svc);
@@ -284,13 +244,9 @@ fn test_tcp_pre_caps_rejection() {
 
     let stream = TcpStream::connect(addr).unwrap();
     stream
-        .set_read_timeout(Some(
-            std::time::Duration::from_secs(3),
-        ))
+        .set_read_timeout(Some(std::time::Duration::from_secs(3)))
         .unwrap();
-    let mut reader = BufReader::new(
-        stream.try_clone().unwrap(),
-    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut writer = stream;
 
     // Read greeting.
@@ -320,15 +276,10 @@ fn test_tcp_pre_caps_rejection() {
 fn test_hmp_interactive_session() {
     let svc = make_svc();
     let input = b"info status\nhelp\nquit\n";
-    let mut reader =
-        std::io::BufReader::new(&input[..]);
+    let mut reader = std::io::BufReader::new(&input[..]);
     let mut output = Vec::new();
 
-    hmp::run_interactive(
-        &mut reader,
-        &mut output,
-        svc,
-    );
+    hmp::run_interactive(&mut reader, &mut output, svc);
 
     let text = String::from_utf8(output).unwrap();
     assert!(text.contains("VM status: running"));

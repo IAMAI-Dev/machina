@@ -4,6 +4,6 @@
 // cases and QEMU's testfloat framework.
 
 mod basic;
-mod edge_cases;
 mod convert;
+mod edge_cases;
 mod rounding;

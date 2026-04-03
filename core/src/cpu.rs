@@ -40,7 +40,9 @@ pub trait GuestCpu {
     fn handle_interrupt(&mut self) {}
     fn handle_exception(&mut self, _cause: u64, _tval: u64) {}
     fn execute_mret(&mut self) {}
-    fn execute_sret(&mut self) -> bool { true }
+    fn execute_sret(&mut self) -> bool {
+        true
+    }
 
     /// Set the jmp_env pointer for longjmp from helpers.
     fn set_jmp_env(&mut self, _ptr: u64) {}

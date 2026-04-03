@@ -66,8 +66,7 @@ impl DynamicInfo {
     }
 }
 
-const FW_FILENAME: &str =
-    "rustsbi-riscv64-machina-fw_dynamic.bin";
+const FW_FILENAME: &str = "rustsbi-riscv64-machina-fw_dynamic.bin";
 
 /// Resolve the bios source: embedded, file, or none.
 enum BiosSource {
@@ -118,9 +117,7 @@ fn find_firmware(name: &str) -> Option<std::path::PathBuf> {
     None
 }
 
-fn resolve_bios(
-    bios_path: &Option<std::path::PathBuf>,
-) -> BiosSource {
+fn resolve_bios(bios_path: &Option<std::path::PathBuf>) -> BiosSource {
     match bios_path {
         Some(p) => {
             let s = p.to_str().unwrap_or("");
@@ -175,11 +172,7 @@ fn write_mrom(
         let bytes = word.to_le_bytes();
         unsafe {
             let dst = ptr.add(i * 4);
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr(),
-                dst,
-                4,
-            );
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, 4);
         }
     }
 
@@ -216,70 +209,38 @@ pub fn boot_ref_machine(
             let as_ = machine.address_space();
             if is_elf(&data) {
                 let info = loader::load_elf(&data, as_)
-                    .map_err(|e| -> Box<dyn std::error::Error> {
-                        e.into()
-                    })?;
+                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
                 fw_entry = Some(info.entry.0);
             } else {
-                loader::load_binary(
-                    &data,
-                    GPA::new(RAM_BASE),
-                    as_,
-                )
-                .map_err(|e| -> Box<dyn std::error::Error> {
-                    e.into()
-                })?;
+                loader::load_binary(&data, GPA::new(RAM_BASE), as_)
+                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             }
         }
         BiosSource::Embedded => {
             if !EMBEDDED_FW.is_empty() {
                 let as_ = machine.address_space();
-                loader::load_binary(
-                    EMBEDDED_FW,
-                    GPA::new(RAM_BASE),
-                    as_,
-                )
-                .map_err(
-                    |e| -> Box<dyn std::error::Error> {
-                        e.into()
-                    },
-                )?;
-            } else if let Some(path) =
-                find_firmware(FW_FILENAME)
-            {
+                loader::load_binary(EMBEDDED_FW, GPA::new(RAM_BASE), as_)
+                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            } else if let Some(path) = find_firmware(FW_FILENAME) {
                 let data = std::fs::read(&path)?;
                 let as_ = machine.address_space();
                 if is_elf(&data) {
-                    let info =
-                        loader::load_elf(&data, as_)
-                            .map_err(|e| -> Box<
-                                dyn std::error::Error,
-                            > {
-                                e.into()
-                            })?;
+                    let info = loader::load_elf(&data, as_).map_err(
+                        |e| -> Box<dyn std::error::Error> { e.into() },
+                    )?;
                     fw_entry = Some(info.entry.0);
                 } else {
-                    loader::load_binary(
-                        &data,
-                        GPA::new(RAM_BASE),
-                        as_,
-                    )
-                    .map_err(
-                        |e| -> Box<
-                            dyn std::error::Error,
-                        > {
+                    loader::load_binary(&data, GPA::new(RAM_BASE), as_)
+                        .map_err(|e| -> Box<dyn std::error::Error> {
                             e.into()
-                        },
-                    )?;
+                        })?;
                 }
             } else {
-                return Err(
-                    "no firmware found; use \
+                return Err("no firmware found; use \
                      -bios <path>, set \
                      $MACHINA_DATADIR, or build \
                      with embed-firmware feature"
-                        .into(),
-                );
+                    .into());
             }
         }
         BiosSource::None => {}
@@ -297,19 +258,11 @@ pub fn boot_ref_machine(
         };
         if is_elf(&data) {
             let info = loader::load_elf(&data, as_)
-                .map_err(|e| -> Box<dyn std::error::Error> {
-                    e.into()
-                })?;
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             kernel_entry = Some(info.entry.0);
         } else {
-            loader::load_binary(
-                &data,
-                GPA::new(load_addr),
-                as_,
-            )
-            .map_err(|e| -> Box<dyn std::error::Error> {
-                e.into()
-            })?;
+            loader::load_binary(&data, GPA::new(load_addr), as_)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         }
     }
 
@@ -324,9 +277,7 @@ pub fn boot_ref_machine(
     let fdt_addr = RAM_BASE + fdt_offset;
     let as_ = machine.address_space();
     loader::load_binary(&fdt, GPA::new(fdt_addr), as_)
-        .map_err(|e| -> Box<dyn std::error::Error> {
-            e.into()
-        })?;
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // Compute start_addr for reset vector jump target.
     let start_addr = if let Some(entry) = fw_entry {

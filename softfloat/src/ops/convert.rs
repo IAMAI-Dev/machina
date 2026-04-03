@@ -126,8 +126,7 @@ pub fn to_u32<F: FloatFormat>(a: F, env: &mut FloatEnv) -> u32 {
         // INEXACT (value was not zero but rounds to 0).
         // If magnitude > 0, the negative integer is not
         // representable as unsigned → INVALID.
-        let (_, mag, inexact) =
-            float_to_uint128::<F>(a, env);
+        let (_, mag, inexact) = float_to_uint128::<F>(a, env);
         if mag > 0 {
             env.raise(ExcFlags::INVALID);
         } else if inexact {
@@ -201,8 +200,7 @@ pub fn to_u64<F: FloatFormat>(a: F, env: &mut FloatEnv) -> u64 {
     }
 
     if parts.sign {
-        let (_, mag, inexact) =
-            float_to_uint128::<F>(a, env);
+        let (_, mag, inexact) = float_to_uint128::<F>(a, env);
         if mag > 0 {
             env.raise(ExcFlags::INVALID);
         } else if inexact {

@@ -22,8 +22,7 @@ use machina_memory::region::{MemoryRegion, MmioOps};
 
 use crate::sifive_test::SifiveTest;
 
-type MonitorCallback =
-    Arc<Mutex<dyn FnMut(u8) + Send>>;
+type MonitorCallback = Arc<Mutex<dyn FnMut(u8) + Send>>;
 
 // QEMU virt memory map base addresses.
 pub const MROM_BASE: u64 = 0x0000_1000;
@@ -191,8 +190,7 @@ pub struct RefMachine {
     // Whether VirtIO block device is configured.
     has_virtio: bool,
     // Monitor callbacks for StdioChardev.
-    quit_cb:
-        Option<Arc<dyn Fn() + Send + Sync>>,
+    quit_cb: Option<Arc<dyn Fn() + Send + Sync>>,
     monitor_cb: Option<MonitorCallback>,
 }
 
@@ -245,18 +243,12 @@ impl RefMachine {
     }
 
     /// Set quit callback for StdioChardev (Ctrl+A X).
-    pub fn set_quit_cb(
-        &mut self,
-        cb: Arc<dyn Fn() + Send + Sync>,
-    ) {
+    pub fn set_quit_cb(&mut self, cb: Arc<dyn Fn() + Send + Sync>) {
         self.quit_cb = Some(cb);
     }
 
     /// Set monitor callback for StdioChardev (Ctrl+A C).
-    pub fn set_monitor_cb(
-        &mut self,
-        cb: Arc<Mutex<dyn FnMut(u8) + Send>>,
-    ) {
+    pub fn set_monitor_cb(&mut self, cb: Arc<Mutex<dyn FnMut(u8) + Send>>) {
         self.monitor_cb = Some(cb);
     }
 
@@ -265,9 +257,7 @@ impl RefMachine {
     }
 
     pub fn mrom_block(&self) -> &Arc<RamBlock> {
-        self.mrom_block
-            .as_ref()
-            .expect("machine not initialized")
+        self.mrom_block.as_ref().expect("machine not initialized")
     }
 
     pub fn fdt_blob(&self) -> &[u8] {
@@ -474,24 +464,13 @@ impl RefMachine {
         // /soc/virtio_mmio@10001000 (if drive configured)
         if self.has_virtio {
             fdt.begin_node("virtio_mmio@10001000");
-            fdt.property_string(
-                "compatible",
-                "virtio,mmio",
-            );
+            fdt.property_string("compatible", "virtio,mmio");
             fdt.property_u32_list(
                 "reg",
-                &[
-                    0,
-                    VIRTIO0_BASE as u32,
-                    0,
-                    VIRTIO0_SIZE as u32,
-                ],
+                &[0, VIRTIO0_BASE as u32, 0, VIRTIO0_SIZE as u32],
             );
             fdt.property_u32("interrupts", VIRTIO_IRQ);
-            fdt.property_u32(
-                "interrupt-parent",
-                plic_phandle,
-            );
+            fdt.property_u32("interrupt-parent", plic_phandle);
             fdt.end_node();
         }
 
@@ -586,8 +565,7 @@ impl Machine for RefMachine {
         self.sifive_test = Some(sifive_test);
 
         // MROM at 0x1000 (mask ROM for reset vector).
-        let (mrom_region, mrom_block) =
-            MemoryRegion::ram("mrom", MROM_SIZE);
+        let (mrom_region, mrom_block) = MemoryRegion::ram("mrom", MROM_SIZE);
         self.mrom_block = Some(mrom_block);
         root.add_subregion(mrom_region, GPA::new(MROM_BASE));
 
@@ -596,28 +574,18 @@ impl Machine for RefMachine {
             use machina_hw_virtio::block::VirtioBlk;
             use machina_hw_virtio::mmio::VirtioMmio;
 
-            let blk = VirtioBlk::open(drive_path)
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "virtio-blk: failed to open \
+            let blk = VirtioBlk::open(drive_path).unwrap_or_else(|e| {
+                panic!(
+                    "virtio-blk: failed to open \
                          {:?}: {}",
-                        drive_path, e
-                    );
-                });
-            let plic_sink = Arc::new(PlicIrqSink(
-                Arc::clone(
-                    self.plic.as_ref().unwrap(),
-                ),
-            ));
-            let virtio_irq = IrqLine::new(
-                plic_sink as Arc<dyn IrqSink>,
-                VIRTIO_IRQ,
-            );
-            let ram_ptr = self
-                .ram_block
-                .as_ref()
-                .unwrap()
-                .as_ptr();
+                    drive_path, e
+                );
+            });
+            let plic_sink =
+                Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
+            let virtio_irq =
+                IrqLine::new(plic_sink as Arc<dyn IrqSink>, VIRTIO_IRQ);
+            let ram_ptr = self.ram_block.as_ref().unwrap().as_ptr();
             let virtio_mmio = VirtioMmio::new(
                 blk,
                 virtio_irq,
@@ -630,10 +598,7 @@ impl Machine for RefMachine {
                 VIRTIO0_SIZE,
                 Box::new(virtio_mmio),
             );
-            root.add_subregion(
-                virtio_region,
-                GPA::new(VIRTIO0_BASE),
-            );
+            root.add_subregion(virtio_region, GPA::new(VIRTIO0_BASE));
             self.has_virtio = true;
         }
 
@@ -654,28 +619,21 @@ impl Machine for RefMachine {
 
         // ---- Attach IRQ + chardev to UART ----
         {
-            let backend: Box<dyn Chardev + Send> =
-                if opts.nographic {
-                    let mut sc = StdioChardev::new();
-                    // Install monitor callbacks if
-                    // monitor_cb/quit_cb were set
-                    // on self by the caller.
-                    if let Some(ref qcb) =
-                        self.quit_cb
-                    {
-                        sc.set_quit_cb(Arc::clone(qcb));
-                    }
-                    if let Some(ref mcb) =
-                        self.monitor_cb
-                    {
-                        sc.set_monitor_cb(
-                            Arc::clone(mcb),
-                        );
-                    }
-                    Box::new(sc)
-                } else {
-                    Box::new(NullChardev)
-                };
+            let backend: Box<dyn Chardev + Send> = if opts.nographic {
+                let mut sc = StdioChardev::new();
+                // Install monitor callbacks if
+                // monitor_cb/quit_cb were set
+                // on self by the caller.
+                if let Some(ref qcb) = self.quit_cb {
+                    sc.set_quit_cb(Arc::clone(qcb));
+                }
+                if let Some(ref mcb) = self.monitor_cb {
+                    sc.set_monitor_cb(Arc::clone(mcb));
+                }
+                Box::new(sc)
+            } else {
+                Box::new(NullChardev)
+            };
             let mut fe = CharFrontend::new(backend);
 
             // Wire backend input -> UART receive.

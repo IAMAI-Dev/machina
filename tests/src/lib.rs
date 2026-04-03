@@ -11,6 +11,10 @@ mod frontend;
 #[cfg(test)]
 mod integration;
 #[cfg(test)]
+mod monitor;
+#[cfg(test)]
+mod softfloat;
+#[cfg(test)]
 mod softmmu;
 #[cfg(test)]
 mod softmmu_exec;
@@ -18,7 +22,3 @@ mod softmmu_exec;
 mod tools;
 #[cfg(test)]
 mod virtio;
-#[cfg(test)]
-mod softfloat;
-#[cfg(test)]
-mod monitor;
