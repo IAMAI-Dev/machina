@@ -61,8 +61,22 @@ fn test_ref_machine_uart_is_realized_via_sysbus() {
     let mut m = RefMachine::new();
     m.init(&default_opts()).expect("init failed");
 
-    assert_eq!(m.sysbus().mappings().len(), 1);
-    assert_eq!(m.sysbus().mappings()[0].owner, "uart0");
+    assert_eq!(m.sysbus().mappings().len(), 3);
+    assert!(m
+        .sysbus()
+        .mappings()
+        .iter()
+        .any(|mapping| mapping.owner == "uart0"));
+    assert!(m
+        .sysbus()
+        .mappings()
+        .iter()
+        .any(|mapping| mapping.owner == "plic0"));
+    assert!(m
+        .sysbus()
+        .mappings()
+        .iter()
+        .any(|mapping| mapping.owner == "aclint0"));
 
     let uart = m.uart().lock().unwrap();
     assert_eq!(uart.chardev_property(), Some("/machine/chardev/uart0"));

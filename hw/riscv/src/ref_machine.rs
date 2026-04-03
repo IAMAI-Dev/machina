@@ -15,8 +15,8 @@ use machina_hw_core::chardev::{
 };
 use machina_hw_core::fdt::FdtBuilder;
 use machina_hw_core::irq::{IrqLine, IrqSink};
-use machina_hw_intc::aclint::Aclint;
-use machina_hw_intc::plic::Plic;
+use machina_hw_intc::aclint::{Aclint, AclintMmio};
+use machina_hw_intc::plic::{Plic, PlicIrqSink, PlicMmio};
 use machina_memory::address_space::AddressSpace;
 use machina_memory::ram::RamBlock;
 use machina_memory::region::{MemoryRegion, MmioOps};
@@ -107,45 +107,6 @@ impl MmioOps for SifiveTestMmio {
 
     fn write(&self, offset: u64, size: u32, val: u64) {
         self.0.write(offset, size, val);
-    }
-}
-
-// ---- MMIO adapter: PLIC ----
-
-struct PlicMmio(Arc<Mutex<Plic>>);
-
-impl MmioOps for PlicMmio {
-    fn read(&self, offset: u64, size: u32) -> u64 {
-        self.0.lock().unwrap().read(offset, size)
-    }
-
-    fn write(&self, offset: u64, size: u32, val: u64) {
-        self.0.lock().unwrap().write(offset, size, val);
-    }
-}
-
-// ---- IRQ adapter: PLIC as IrqSink ----
-
-/// Routes device IRQ level changes to PLIC pending bits.
-struct PlicIrqSink(Arc<Mutex<Plic>>);
-
-impl IrqSink for PlicIrqSink {
-    fn set_irq(&self, irq: u32, level: bool) {
-        self.0.lock().unwrap().set_irq(irq, level);
-    }
-}
-
-// ---- MMIO adapter: ACLINT (CLINT-compatible) ----
-
-struct AclintMmio(Arc<Mutex<Aclint>>);
-
-impl MmioOps for AclintMmio {
-    fn read(&self, offset: u64, size: u32) -> u64 {
-        self.0.lock().unwrap().read(offset, size)
-    }
-
-    fn write(&self, offset: u64, size: u32, val: u64) {
-        self.0.lock().unwrap().write(offset, size, val);
     }
 }
 
@@ -533,23 +494,37 @@ impl Machine for RefMachine {
 
         // PLIC: 2 contexts per hart (M-mode + S-mode).
         let plic_num_contexts = 2 * opts.cpu_count;
-        let plic = Arc::new(Mutex::new(Plic::new(
+        let plic = Arc::new(Mutex::new(Plic::new_named(
+            "plic0",
             PLIC_NUM_SOURCES,
             plic_num_contexts,
         )));
-        let plic_mmio = PlicMmio(Arc::clone(&plic));
-        let plic_region =
-            MemoryRegion::io("plic", PLIC_SIZE, Box::new(plic_mmio));
-        root.add_subregion(plic_region, GPA::new(PLIC_BASE));
-        self.plic = Some(plic);
+        {
+            let mut p = plic.lock().unwrap();
+            p.attach_to_bus(&sysbus)?;
+            let plic_region = MemoryRegion::io(
+                "plic",
+                PLIC_SIZE,
+                Box::new(PlicMmio(Arc::clone(&plic))),
+            );
+            p.register_mmio(plic_region, GPA::new(PLIC_BASE))?;
+        }
+        self.plic = Some(Arc::clone(&plic));
 
         // ACLINT (CLINT-compatible).
-        let aclint = Arc::new(Mutex::new(Aclint::new(opts.cpu_count)));
-        let aclint_mmio = AclintMmio(Arc::clone(&aclint));
-        let aclint_region =
-            MemoryRegion::io("clint", ACLINT_SIZE, Box::new(aclint_mmio));
-        root.add_subregion(aclint_region, GPA::new(ACLINT_BASE));
-        self.aclint = Some(aclint);
+        let aclint =
+            Arc::new(Mutex::new(Aclint::new_named("aclint0", opts.cpu_count)));
+        {
+            let mut a = aclint.lock().unwrap();
+            a.attach_to_bus(&sysbus)?;
+            let aclint_region = MemoryRegion::io(
+                "clint",
+                ACLINT_SIZE,
+                Box::new(AclintMmio(Arc::clone(&aclint))),
+            );
+            a.register_mmio(aclint_region, GPA::new(ACLINT_BASE))?;
+        }
+        self.aclint = Some(Arc::clone(&aclint));
 
         // UART0 is migrated through the MOM sysbus path.
         let uart = Arc::new(Mutex::new(Uart16550::new_named("uart0")));
@@ -614,8 +589,6 @@ impl Machine for RefMachine {
             self.has_virtio = true;
         }
 
-        self.address_space = Some(AddressSpace::new(root));
-
         // ---- IRQ wiring ----
         // Per-hart CPU IRQ sinks update real csr.mip bits.
 
@@ -628,44 +601,6 @@ impl Machine for RefMachine {
         );
         self.uart_irq =
             Some(IrqLine::new(plic_as_sink as Arc<dyn IrqSink>, UART_IRQ));
-
-        // ---- Attach IRQ + chardev to UART ----
-        {
-            let backend: Box<dyn Chardev + Send> = if opts.nographic {
-                let mut sc = StdioChardev::new();
-                // Install monitor callbacks if
-                // monitor_cb/quit_cb were set
-                // on self by the caller.
-                if let Some(ref qcb) = self.quit_cb {
-                    sc.set_quit_cb(Arc::clone(qcb));
-                }
-                if let Some(ref mcb) = self.monitor_cb {
-                    sc.set_monitor_cb(Arc::clone(mcb));
-                }
-                Box::new(sc)
-            } else {
-                Box::new(NullChardev)
-            };
-            let fe = CharFrontend::new(backend);
-
-            // Wire backend input -> UART receive.
-            let uart_for_rx = Arc::clone(self.uart.as_ref().unwrap());
-            let rx_cb: Arc<Mutex<dyn FnMut(u8) + Send>> =
-                Arc::new(Mutex::new(move |byte: u8| {
-                    uart_for_rx.lock().unwrap().receive(byte);
-                }));
-
-            let mut u = self.uart.as_ref().unwrap().lock().unwrap();
-            u.attach_irq(uart_irq_line)?;
-            u.attach_chardev(fe)?;
-            u.realize_onto(
-                &mut sysbus,
-                self.address_space.as_mut().unwrap(),
-                rx_cb,
-            )?;
-        }
-
-        self.sysbus = Some(sysbus);
 
         // ---- Connect PLIC context outputs ----
         // All IRQ sinks write to shared_mip which is
@@ -719,6 +654,62 @@ impl Machine for RefMachine {
             }
         }
 
+        self.address_space = Some(AddressSpace::new(root));
+
+        {
+            let address_space = self.address_space.as_mut().unwrap();
+            self.plic
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .realize_onto(&mut sysbus, address_space)?;
+            self.aclint
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .realize_onto(&mut sysbus, address_space)?;
+        }
+
+        // ---- Attach IRQ + chardev to UART ----
+        {
+            let backend: Box<dyn Chardev + Send> = if opts.nographic {
+                let mut sc = StdioChardev::new();
+                // Install monitor callbacks if
+                // monitor_cb/quit_cb were set
+                // on self by the caller.
+                if let Some(ref qcb) = self.quit_cb {
+                    sc.set_quit_cb(Arc::clone(qcb));
+                }
+                if let Some(ref mcb) = self.monitor_cb {
+                    sc.set_monitor_cb(Arc::clone(mcb));
+                }
+                Box::new(sc)
+            } else {
+                Box::new(NullChardev)
+            };
+            let fe = CharFrontend::new(backend);
+
+            // Wire backend input -> UART receive.
+            let uart_for_rx = Arc::clone(self.uart.as_ref().unwrap());
+            let rx_cb: Arc<Mutex<dyn FnMut(u8) + Send>> =
+                Arc::new(Mutex::new(move |byte: u8| {
+                    uart_for_rx.lock().unwrap().receive(byte);
+                }));
+
+            let mut u = self.uart.as_ref().unwrap().lock().unwrap();
+            u.attach_irq(uart_irq_line)?;
+            u.attach_chardev(fe)?;
+            u.realize_onto(
+                &mut sysbus,
+                self.address_space.as_mut().unwrap(),
+                rx_cb,
+            )?;
+        }
+
+        self.sysbus = Some(sysbus);
+
         // Generate FDT.
         self.fdt_blob = Some(self.generate_fdt());
 
@@ -726,13 +717,11 @@ impl Machine for RefMachine {
     }
 
     fn reset(&mut self) {
-        // Re-create devices with fresh state.
         if let Some(plic) = &self.plic {
-            *plic.lock().unwrap() =
-                Plic::new(PLIC_NUM_SOURCES, 2 * self.cpu_count);
+            plic.lock().unwrap().reset_runtime();
         }
         if let Some(aclint) = &self.aclint {
-            *aclint.lock().unwrap() = Aclint::new(self.cpu_count);
+            aclint.lock().unwrap().reset_runtime();
         }
         if let Some(uart) = &self.uart {
             uart.lock().unwrap().reset_runtime();

@@ -1,8 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use machina_core::address::GPA;
+use machina_hw_core::bus::SysBus;
 use machina_hw_core::irq::{IrqLine, IrqSink};
-use machina_hw_intc::plic::Plic;
+use machina_hw_intc::plic::{Plic, PlicMmio};
+use machina_memory::address_space::AddressSpace;
+use machina_memory::region::MemoryRegion;
 
 struct TestIrqSink {
     levels: Vec<AtomicBool>,
@@ -28,6 +32,10 @@ impl IrqSink for TestIrqSink {
             f.store(level, Ordering::Relaxed);
         }
     }
+}
+
+fn make_address_space() -> AddressSpace {
+    AddressSpace::new(MemoryRegion::container("system", u64::MAX))
 }
 
 #[test]
@@ -215,4 +223,36 @@ fn test_plic_level_triggered_resample() {
         0,
         "pending should stay cleared when source is low"
     );
+}
+
+#[test]
+fn test_plic_realize_via_sysbus_maps_mmio() {
+    let mut bus = SysBus::new("sysbus0");
+    let plic = Arc::new(Mutex::new(Plic::new_named("plic0", 64, 2)));
+    {
+        let mut device = plic.lock().unwrap();
+        device.attach_to_bus(&bus).unwrap();
+        device
+            .register_mmio(
+                MemoryRegion::io(
+                    "plic",
+                    0x0400_0000,
+                    Box::new(PlicMmio(Arc::clone(&plic))),
+                ),
+                GPA::new(0x0C00_0000),
+            )
+            .unwrap();
+    }
+
+    let mut address_space = make_address_space();
+    plic.lock()
+        .unwrap()
+        .realize_onto(&mut bus, &mut address_space)
+        .unwrap();
+
+    assert!(address_space.is_mapped(GPA::new(0x0C00_0000), 4));
+    address_space.write(GPA::new(0x0C00_0004), 4, 7);
+    assert_eq!(address_space.read(GPA::new(0x0C00_0004), 4), 7);
+    assert_eq!(bus.mappings().len(), 1);
+    assert_eq!(bus.mappings()[0].owner, "plic0");
 }

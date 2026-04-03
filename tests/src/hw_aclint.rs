@@ -1,8 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use machina_core::address::GPA;
+use machina_hw_core::bus::SysBus;
 use machina_hw_core::irq::{IrqLine, IrqSink};
-use machina_hw_intc::aclint::Aclint;
+use machina_hw_intc::aclint::{Aclint, AclintMmio};
+use machina_memory::address_space::AddressSpace;
+use machina_memory::region::MemoryRegion;
 
 struct TestIrqSink {
     levels: Vec<AtomicBool>,
@@ -28,6 +32,10 @@ impl IrqSink for TestIrqSink {
             f.store(level, Ordering::Relaxed);
         }
     }
+}
+
+fn make_address_space() -> AddressSpace {
+    AddressSpace::new(MemoryRegion::container("system", u64::MAX))
 }
 
 #[test]
@@ -266,4 +274,37 @@ fn test_aclint_retarget_future_cancels_stale_timer() {
         "MTI should be high after retarget to near \
          future"
     );
+}
+
+#[test]
+fn test_aclint_realize_via_sysbus_maps_mmio() {
+    let mut bus = SysBus::new("sysbus0");
+    let aclint = Arc::new(Mutex::new(Aclint::new_named("aclint0", 2)));
+    {
+        let mut device = aclint.lock().unwrap();
+        device.attach_to_bus(&bus).unwrap();
+        device
+            .register_mmio(
+                MemoryRegion::io(
+                    "clint",
+                    0x1_0000,
+                    Box::new(AclintMmio(Arc::clone(&aclint))),
+                ),
+                GPA::new(0x0200_0000),
+            )
+            .unwrap();
+    }
+
+    let mut address_space = make_address_space();
+    aclint
+        .lock()
+        .unwrap()
+        .realize_onto(&mut bus, &mut address_space)
+        .unwrap();
+
+    assert!(address_space.is_mapped(GPA::new(0x0200_0000), 8));
+    address_space.write(GPA::new(0x0200_4000), 8, 0x1234);
+    assert_eq!(address_space.read(GPA::new(0x0200_4000), 8), 0x1234);
+    assert_eq!(bus.mappings().len(), 1);
+    assert_eq!(bus.mappings()[0].owner, "aclint0");
 }
