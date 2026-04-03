@@ -77,26 +77,6 @@ cargo build --release
 | Ctrl+A, C | Toggle monitor console |
 | Ctrl+A, H | Show help |
 
-## Workspace
-
-| Crate | Description |
-|-------|-------------|
-| `machina` | CLI entry point |
-| `machina-core` | IR definitions, CPU trait, monitor state |
-| `machina-accel` | Optimizer, register allocator, x86-64 codegen, execution engine |
-| `machina-guest-riscv` | RISC-V frontend: RV64GC + privileged ISA (188 instructions), Sv39 MMU |
-| `machina-decode` | `.decode` file parser and Rust decoder generator |
-| `machina-system` | Full-system CPU bridge, CpuManager, WFI |
-| `machina-memory` | AddressSpace, memory regions, MMIO dispatch |
-| `machina-hw-core` | Device infrastructure: IRQ, chardev, FDT |
-| `machina-hw-intc` | PLIC, ACLINT (MTIMER + MSWI) |
-| `machina-hw-char` | UART 16550A |
-| `machina-hw-riscv` | Reference machine (`riscv64-ref`), boot, SBI |
-| `machina-hw-virtio` | VirtIO MMIO transport + block device |
-| `machina-monitor` | MMP (QMP-compatible) + HMP monitor console |
-| `machina-difftest` | GDB RSP client for differential testing |
-| `machina-tests` | 1039 tests |
-
 ## Contributing
 
 Machina is an AI-agent collaborative development project. Contributions are welcome from both humans and AI agents.
