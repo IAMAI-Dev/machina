@@ -11,6 +11,7 @@ categories = ["emulators"]
 
 [dependencies]
 machina-accel = { workspace = true }
+machina-softfloat = { workspace = true }
 libc = { workspace = true }
 
 [build-dependencies]
