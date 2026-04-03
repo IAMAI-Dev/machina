@@ -3,6 +3,8 @@ use std::fmt;
 
 use machina_core::mobject::{MObject, MObjectState};
 
+use crate::property::{MPropertySet, MPropertySpec, MPropertyValue};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MDeviceLifecycle {
     Created,
@@ -14,6 +16,14 @@ pub enum MDeviceError {
     AlreadyRealized,
     NotRealized,
     LateMutation(&'static str),
+    DuplicateProperty(String),
+    UnknownProperty(String),
+    MissingRequiredProperty(String),
+    PropertyTypeMismatch {
+        name: String,
+        expected: crate::property::MPropertyType,
+        actual: crate::property::MPropertyType,
+    },
 }
 
 impl fmt::Display for MDeviceError {
@@ -23,6 +33,22 @@ impl fmt::Display for MDeviceError {
             Self::NotRealized => write!(f, "device is not realized"),
             Self::LateMutation(what) => {
                 write!(f, "cannot mutate {what} after realize")
+            }
+            Self::DuplicateProperty(name) => {
+                write!(f, "property '{name}' is already defined")
+            }
+            Self::UnknownProperty(name) => {
+                write!(f, "unknown property '{name}'")
+            }
+            Self::MissingRequiredProperty(name) => {
+                write!(f, "required property '{name}' is missing")
+            }
+            Self::PropertyTypeMismatch {
+                name,
+                expected,
+                actual,
+            } => {
+                write!(f, "property '{name}' expects {expected}, got {actual}")
             }
         }
     }
@@ -34,6 +60,7 @@ pub struct MDeviceState {
     object: MObjectState,
     lifecycle: MDeviceLifecycle,
     parent_bus: Option<String>,
+    properties: MPropertySet,
 }
 
 impl MDeviceState {
@@ -43,6 +70,7 @@ impl MDeviceState {
                 .expect("device local_id must be valid"),
             lifecycle: MDeviceLifecycle::Created,
             parent_bus: None,
+            properties: MPropertySet::default(),
         }
     }
 
@@ -78,10 +106,41 @@ impl MDeviceState {
         self.parent_bus.as_deref()
     }
 
+    pub fn define_property(
+        &mut self,
+        spec: MPropertySpec,
+    ) -> Result<(), MDeviceError> {
+        if self.is_realized() {
+            return Err(MDeviceError::LateMutation("property_schema"));
+        }
+        self.properties.define(spec)
+    }
+
+    pub fn set_property(
+        &mut self,
+        name: &str,
+        value: MPropertyValue,
+    ) -> Result<(), MDeviceError> {
+        self.properties.set(self.lifecycle, name, value)
+    }
+
+    pub fn property(&self, name: &str) -> Option<&MPropertyValue> {
+        self.properties.get(name)
+    }
+
+    pub fn property_names(&self) -> Vec<&str> {
+        self.properties.names()
+    }
+
+    pub fn validate_properties(&self) -> Result<(), MDeviceError> {
+        self.properties.validate_required()
+    }
+
     pub fn mark_realized(&mut self) -> Result<(), MDeviceError> {
         if self.is_realized() {
             return Err(MDeviceError::AlreadyRealized);
         }
+        self.validate_properties()?;
         self.lifecycle = MDeviceLifecycle::Realized;
         Ok(())
     }
