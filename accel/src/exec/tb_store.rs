@@ -8,18 +8,20 @@ use crate::HostCodeGen;
 
 const MAX_TBS: usize = 65536;
 /// Max physical pages tracked (1M pages = 4 GB).
-const CODE_BITMAP_PAGES: usize = 1 << 20;
-const CODE_BITMAP_BYTES: usize = CODE_BITMAP_PAGES / 8;
+const CODE_REFCOUNT_PAGES: usize = 1 << 20;
 
 /// Thread-safe storage and hash-table lookup for TBs.
 ///
 /// Uses `UnsafeCell<Vec>` + `AtomicUsize` for lock-free reads
 /// and a `Mutex` for hash table mutations.
 ///
-/// Also maintains a code-page bitmap: bit N is set when
-/// at least one valid TB has `phys_pc` on page N.  The
-/// store helper checks this bitmap (lock-free Relaxed
-/// load) to decide whether a write needs dirty tracking.
+/// Also maintains a per-page reference count: the count is
+/// incremented when a TB is created on that page and
+/// decremented when the TB is invalidated.  A count > 0 means
+/// the page contains at least one valid TB.  The store helper
+/// checks this lock-free to decide whether a write needs dirty
+/// tracking -- replacing the old clear-and-rebuild bitmap
+/// approach with O(1) incremental updates.
 pub struct TbStore {
     tbs: UnsafeCell<Vec<TranslationBlock>>,
     len: AtomicUsize,
@@ -27,7 +29,7 @@ pub struct TbStore {
     /// Per-page refcount (0 = no code, >0 = has code TBs).
     /// Index = phys_page = phys_addr >> 12.  Stored as
     /// AtomicU8 for lock-free read from store helpers.
-    /// Saturates at 255 (never decrements past that).
+    /// Saturates at 255 (never decrements past zero).
     code_pages: Vec<AtomicU8>,
 }
 
@@ -45,8 +47,8 @@ impl TbStore {
         // Ensure capacity is reserved upfront.
         assert!(v.capacity() >= MAX_TBS);
         v.clear();
-        let mut cp = Vec::with_capacity(CODE_BITMAP_BYTES);
-        for _ in 0..CODE_BITMAP_BYTES {
+        let mut cp = Vec::with_capacity(CODE_REFCOUNT_PAGES);
+        for _ in 0..CODE_REFCOUNT_PAGES {
             cp.push(AtomicU8::new(0));
         }
         Self {
@@ -153,6 +155,9 @@ impl TbStore {
         let tb = self.get(tb_idx);
         tb.invalid.store(true, Ordering::Release);
 
+        // Decrement code-page refcount for the invalidated TB.
+        self.dec_code_page(tb.phys_pc >> 12);
+
         // 1. Unlink incoming edges.
         let jmp_list = {
             let mut jmp = tb.jmp.lock().unwrap();
@@ -240,10 +245,40 @@ impl TbStore {
         for i in 0..len {
             let tb = self.get(i);
             if !tb.invalid.load(Ordering::Acquire) {
-                self.invalidate(i, code_buf, backend);
+                tb.invalid.store(true, Ordering::Release);
+                // 1. Unlink incoming edges.
+                let jmp_list = {
+                    let mut jmp = tb.jmp.lock().unwrap();
+                    std::mem::take(&mut jmp.jmp_list)
+                };
+                for (src, slot) in jmp_list {
+                    Self::reset_jump(
+                        self.get(src), code_buf, backend, slot,
+                    );
+                    let src_tb = self.get(src);
+                    let mut src_jmp = src_tb.jmp.lock().unwrap();
+                    src_jmp.jmp_dest[slot] = None;
+                }
+                // 2. Unlink outgoing edges.
+                for slot in 0..2 {
+                    let mut jmp = tb.jmp.lock().unwrap();
+                    if let Some(dst) = jmp.jmp_dest[slot].take() {
+                        drop(jmp);
+                        let dst_tb = self.get(dst);
+                        let mut dst_jmp =
+                            dst_tb.jmp.lock().unwrap();
+                        dst_jmp.jmp_list.retain(
+                            |&(s, n)| !(s == i && n == slot),
+                        );
+                    }
+                }
+                // 3. Remove from hash chain.
+                let pc = tb.pc;
+                let flags = tb.flags;
+                self.unlink_hash(pc, flags, i);
             }
         }
-        // Clear code-page bitmap: no valid TBs remain.
+        // Bulk clear code-page refcounts.
         for b in &self.code_pages {
             b.store(0, Ordering::Relaxed);
         }
@@ -258,21 +293,16 @@ impl TbStore {
         backend: &B,
     ) {
         let len = self.len.load(Ordering::Acquire);
-        let mut any = false;
         for i in 0..len {
             let tb = self.get(i);
             if !tb.invalid.load(Ordering::Acquire)
                 && (tb.phys_pc >> 12) == phys_page
             {
                 self.invalidate(i, code_buf, backend);
-                any = true;
             }
         }
-        // If we invalidated TBs, rebuild bitmap so the
-        // page is unmarked if no valid TBs remain on it.
-        if any {
-            self.rebuild_code_bitmap();
-        }
+        // No rebuild_code_bitmap needed: invalidate()
+        // already decremented per-page refcounts.
     }
 
     /// Flush all TBs and reset the hash table.
@@ -289,44 +319,68 @@ impl TbStore {
         }
     }
 
-    // ── Code-page bitmap ──────────────────────────────
+    // ── Code-page refcount ──────────────────────────
 
-    /// Mark a physical page as containing translated code.
-    /// Called after TB allocation with the TB's phys_pc.
+    /// Increment code-page refcount when a TB is created.
+    /// Called under translate_lock after setting phys_pc.
     pub fn mark_code_page(&self, phys_page: u64) {
-        let idx = (phys_page as usize) / 8;
-        let bit = (phys_page as usize) % 8;
+        let idx = phys_page as usize;
         if idx < self.code_pages.len() {
-            self.code_pages[idx].fetch_or(1u8 << bit, Ordering::Relaxed);
+            self.code_pages[idx]
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    Some(v.saturating_add(1))
+                })
+                .ok();
+        }
+    }
+
+    /// Decrement code-page refcount when a TB is invalidated.
+    fn dec_code_page(&self, phys_page: u64) {
+        let idx = phys_page as usize;
+        if idx < self.code_pages.len() {
+            self.code_pages[idx]
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                    Some(v.saturating_sub(1))
+                })
+                .ok();
         }
     }
 
     /// Check whether a physical page contains code TBs.
     /// Lock-free; safe to call from store helpers.
+    /// Returns true when the per-page refcount is > 0.
     pub fn is_code_page(&self, phys_page: u64) -> bool {
-        let idx = (phys_page as usize) / 8;
-        let bit = (phys_page as usize) % 8;
+        let idx = phys_page as usize;
         if idx < self.code_pages.len() {
-            self.code_pages[idx].load(Ordering::Relaxed) & (1u8 << bit) != 0
+            self.code_pages[idx].load(Ordering::Relaxed) > 0
         } else {
             false
         }
     }
 
-    /// Rebuild the code-page bitmap from all valid TBs.
-    /// Called after invalidation to keep the bitmap
-    /// conservative (a page stays marked if any valid TB
-    /// remains on it).
-    fn rebuild_code_bitmap(&self) {
-        for b in &self.code_pages {
-            b.store(0, Ordering::Relaxed);
-        }
-        let len = self.len.load(Ordering::Acquire);
-        for i in 0..len {
-            let tb = self.get(i);
-            if !tb.invalid.load(Ordering::Acquire) {
-                self.mark_code_page(tb.phys_pc >> 12);
+    /// Remove a TB from the hash chain by (pc, flags).
+    fn unlink_hash(&self, pc: u64, flags: u32, tb_idx: usize) {
+        let bucket = TranslationBlock::hash(pc, flags);
+        let mut hash = self.hash.lock().unwrap();
+        let mut prev: Option<usize> = None;
+        let mut cur = hash[bucket];
+        while let Some(idx) = cur {
+            if idx == tb_idx {
+                let next = self.get(idx).hash_next;
+                if let Some(p) = prev {
+                    unsafe {
+                        self.get_mut(p).hash_next = next;
+                    }
+                } else {
+                    hash[bucket] = next;
+                }
+                unsafe {
+                    self.get_mut(idx).hash_next = None;
+                }
+                return;
             }
+            prev = cur;
+            cur = self.get(idx).hash_next;
         }
     }
 

@@ -140,11 +140,15 @@ where
             let dirty = cpu.take_dirty_pages();
             if !dirty.is_empty() {
                 for page in &dirty {
-                    shared.tb_store.invalidate_phys_page(
-                        *page,
-                        shared.code_buf(),
-                        &shared.backend,
-                    );
+                    // Only invalidate TBs on code pages.
+                    // Data-page writes don't affect TBs.
+                    if shared.tb_store.is_code_page(*page) {
+                        shared.tb_store.invalidate_phys_page(
+                            *page,
+                            shared.code_buf(),
+                            &shared.backend,
+                        );
+                    }
                 }
                 per_cpu.jump_cache.invalidate();
                 next_tb_hint = None;
