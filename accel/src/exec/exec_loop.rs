@@ -114,6 +114,25 @@ where
             }
         };
 
+        // GDB breakpoint check: if a software or hardware
+        // breakpoint is set at the current PC, skip TB
+        // execution and proceed to the pause/resume cycle.
+        // gdb_check_breakpoint sets the stop reason to
+        // Breakpoint as a side effect.
+        {
+            let _dbg_pc = cpu.get_pc();
+            if _dbg_pc >= 0x8000_0000 && _dbg_pc < 0x8000_1000 {
+                eprintln!("[exec] bp check pc={:#x}", _dbg_pc);
+            }
+        }
+        if cpu.gdb_check_breakpoint(cpu.get_pc()) {
+            // Save snapshot and park via check_monitor_pause.
+            if cpu.check_monitor_pause() {
+                return ExitReason::Halted;
+            }
+            continue;
+        }
+
         let _atomic_guard = if shared.tb_store.get(tb_idx).contains_atomic {
             Some(shared.atomic_lock.lock().unwrap())
         } else {
@@ -121,6 +140,7 @@ where
         };
         let raw_exit = cpu_tb_exec(shared, cpu, tb_idx);
         drop(_atomic_guard);
+        eprintln!("[exec] TB at idx={}, raw_exit={}", tb_idx, raw_exit);
         let (last_tb, exit_code) = decode_tb_exit(raw_exit);
 
         let src_tb = last_tb.unwrap_or(tb_idx);
@@ -181,11 +201,14 @@ where
             }
             v if v == TB_EXIT_NOCHAIN as usize => {
                 per_cpu.stats.nochain_exit += 1;
+                eprintln!("[exec] NOCHAIN: pc={:#x}, tb_idx={}", cpu.get_pc(), tb_idx);
+                if cpu.check_mem_fault() {
+                    eprintln!("[exec] NOCHAIN after mem_fault: pc={:#x}", cpu.get_pc());
+                    continue;
+                }
+                let pc = cpu.get_pc();
+                eprintln!("[exec] NOCHAIN tb_find: pc={:#x}", pc);
 
-                // Check for latched memory fault BEFORE
-                // looking up the next TB. This ensures
-                // fault_pc is used for mepc before any
-                // tb_find advances the PC (AC-4).
                 if cpu.check_mem_fault() {
                     continue;
                 }
@@ -193,9 +216,14 @@ where
                 let pc = cpu.get_pc();
                 let flags = cpu.get_flags();
 
-                // Check exit_target cache (lock-free atomic).
-                let stb = shared.tb_store.get(src_tb);
-                let cached = stb.exit_target.load(Ordering::Relaxed);
+                // Check exit_target cache for indirect
+                // jumps (goto_ptr / jalr). The last
+                // TB_EXIT_NOCHAIN target is cached per-TB.
+                let cached = shared
+                    .tb_store
+                    .get(src_tb)
+                    .exit_target
+                    .load(Ordering::Relaxed);
                 if cached != EXIT_TARGET_NONE {
                     let tb = shared.tb_store.get(cached);
                     if !tb.invalid.load(Ordering::Acquire)
@@ -206,9 +234,22 @@ where
                     {
                         if cpu.pending_interrupt() {
                             cpu.handle_interrupt();
-                            // Interrupt changed PC; don't
-                            // reuse cached TB.
                         } else {
+                            // GDB breakpoint check:
+                            // exit_target cache bypasses
+                            // the main-loop breakpoint gate.
+                            // Must check here to catch
+                            // breakpoints at TB entry PCs
+                            // (AC-3).
+                            if cpu.gdb_check_breakpoint(pc)
+                            {
+                                if cpu
+                                    .check_monitor_pause()
+                                {
+                                    return ExitReason::Halted;
+                                }
+                                continue;
+                            }
                             next_tb_hint = Some(cached);
                         }
                         continue;
@@ -365,6 +406,13 @@ where
         if cpu.check_monitor_pause() {
             return ExitReason::Halted;
         }
+
+        // GDB single-step: after executing one TB in
+        // stepping mode, pause and wait for the next
+        // GDB command.
+        if cpu.gdb_single_step() {
+            cpu.gdb_complete_step();
+        }
     }
 }
 
@@ -412,6 +460,7 @@ where
 
     // Miss: translate a new TB
     per_cpu.stats.translate += 1;
+    eprintln!("[exec] tb_gen_code: pc={:#x}, flags={:#x}", pc, flags);
     tb_gen_code(shared, per_cpu, cpu, pc, flags)
 }
 

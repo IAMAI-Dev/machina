@@ -13,6 +13,7 @@ use machina_core::wfi::WfiWaker;
 use machina_accel::ir::context::Context;
 use machina_accel::ir::TempIdx;
 use machina_accel::GuestCpu;
+use machina_gdbstub::handler::{GdbTarget, StopReason};
 use machina_guest_riscv::riscv::cpu::RiscvCpu;
 use machina_guest_riscv::riscv::csr::PrivLevel;
 use machina_guest_riscv::riscv::exception::Exception;
@@ -21,6 +22,9 @@ use machina_guest_riscv::riscv::{RiscvDisasContext, RiscvTranslator};
 use machina_guest_riscv::{DisasJumpType, TranslatorOps};
 
 const NUM_GPRS: usize = 32;
+const NUM_FPRS: usize = 32;
+/// Total GDB registers: x0-x31 + pc + f0-f31 = 65.
+const GDB_NUM_REGS: usize = NUM_GPRS + 1 + NUM_FPRS;
 pub const RAM_BASE: u64 = 0x8000_0000;
 const MSTATUS_SIE: u64 = 1 << 1;
 const MSTATUS_MIE: u64 = 1 << 3;
@@ -109,6 +113,7 @@ pub struct FullSystemCpu {
     wfi_waker: Arc<WfiWaker>,
     stop_flag: Arc<AtomicBool>,
     monitor_state: Option<Arc<machina_core::monitor::MonitorState>>,
+    gdb_state: Option<Arc<crate::gdb::GdbState>>,
     // HTIF tohost: offset within RAM to poll for exit.
     htif_tohost_off: Option<u64>,
     htif_exit_code: Arc<AtomicU64>,
@@ -150,6 +155,7 @@ impl FullSystemCpu {
             wfi_waker,
             stop_flag,
             monitor_state: None,
+            gdb_state: None,
             htif_tohost_off: None,
             htif_exit_code: Arc::new(AtomicU64::new(0)),
         }
@@ -187,6 +193,14 @@ impl FullSystemCpu {
         ms: Arc<machina_core::monitor::MonitorState>,
     ) {
         self.monitor_state = Some(ms);
+    }
+
+    /// Attach GDB state for debug control.
+    pub fn set_gdb_state(
+        &mut self,
+        gs: Arc<crate::gdb::GdbState>,
+    ) {
+        self.gdb_state = Some(gs);
     }
 
     /// Read ACLINT mtime register via AddressSpace MMIO.
@@ -700,6 +714,46 @@ impl GuestCpu for FullSystemCpu {
     }
 
     fn check_monitor_pause(&self) -> bool {
+        // GDB pause takes priority (check first).
+        if let Some(ref gs) = self.gdb_state {
+            if gs.is_connected() {
+                // Check for initial pause (-S startup).
+                let state = gs.run_state();
+                if state == crate::gdb::GdbRunState::Paused
+                    || state == crate::gdb::GdbRunState::PauseRequested
+                {
+                    // Save CPU snapshot before parking so
+                    // the GDB server can read registers.
+                    gs.save_snapshot(
+                        &self.cpu.gpr,
+                        &self.cpu.fpr,
+                        self.cpu.pc,
+                    );
+                    let quit = gs.check_and_wait();
+                    // Restore dirty registers from snapshot
+                    // (e.g. PC changed by GDB).
+                    if let Some(snap) =
+                        gs.take_dirty_snapshot()
+                    {
+                        unsafe {
+                            let cpu_ptr =
+                                &self.cpu as *const RiscvCpu
+                                    as *mut RiscvCpu;
+                            for i in 1..32 {
+                                (*cpu_ptr).gpr[i] =
+                                    snap.gpr[i];
+                            }
+                            (*cpu_ptr).pc = snap.pc;
+                            for i in 0..32 {
+                                (*cpu_ptr).fpr[i] =
+                                    snap.fpr[i];
+                            }
+                        }
+                    }
+                    return quit;
+                }
+            }
+        }
         if let Some(ref ms) = self.monitor_state {
             // Save CPU snapshot before parking.
             if ms.is_pause_requested() {
@@ -778,6 +832,42 @@ impl GuestCpu for FullSystemCpu {
 
     fn wait_for_interrupt(&self) -> bool {
         self.wfi_waker.wait()
+    }
+
+    fn gdb_single_step(&self) -> bool {
+        self.gdb_is_stepping()
+    }
+
+    fn gdb_complete_step(&self) {
+        if let Some(ref gs) = self.gdb_state {
+            // Save snapshot before pausing so GDB can read
+            // the post-step register state.
+            gs.save_snapshot(
+                &self.cpu.gpr,
+                &self.cpu.fpr,
+                self.cpu.pc,
+            );
+            gs.set_stop_reason(
+                machina_gdbstub::handler::StopReason::Step,
+            );
+            gs.complete_step();
+        }
+    }
+
+    fn gdb_check_breakpoint(&self, pc: u64) -> bool {
+        if let Some(ref gs) = self.gdb_state {
+            if gs.is_connected()
+                && gs.has_breakpoints()
+                && gs.hit_breakpoint(pc)
+            {
+                gs.set_stop_reason(
+                    machina_gdbstub::handler::StopReason::Breakpoint,
+                );
+                gs.request_pause();
+                return true;
+            }
+        }
+        false
     }
 
     fn handle_priv_csr(&mut self) -> bool {
@@ -1125,9 +1215,22 @@ pub unsafe extern "C" fn machina_mem_read(
                 cpu.mem_fault_tval = gva;
                 return 0;
             }
-            read_phys_sized(cpu, pa, size)
+            let val = read_phys_sized(cpu, pa, size);
+            eprintln!(
+                "[mem_read] OK: gva={:#x} pa={:#x} size={} \
+                 val={:#x}",
+                gva, pa, size, val,
+            );
+            val
         }
-        None => 0,
+        None => {
+            eprintln!(
+                "[mem_read] FAULT: gva={:#x} size={} \
+                 translate failed cause={}",
+                gva, size, cpu.mem_fault_cause,
+            );
+            0
+        }
     }
 }
 
@@ -1250,4 +1353,224 @@ pub unsafe extern "C" fn machina_csr_op(
     }
 
     old
+}
+
+// ---- GDB register access and GdbTarget implementation ----
+
+/// Helper: read guest memory at physical address.
+fn gdb_read_phys(ram_ptr: *const u8, _ram_size: u64, _guest_base: u64, ram_end: u64, as_ptr: u64, pa: u64, len: usize) -> Vec<u8> {
+    if pa >= RAM_BASE && pa + len as u64 <= ram_end {
+        let off = pa.wrapping_sub(RAM_BASE);
+        let ptr = unsafe { ram_ptr.add(off as usize) };
+        let mut buf = vec![0u8; len];
+        unsafe {
+            std::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len);
+        }
+        buf
+    } else if as_ptr != 0 {
+        // MMIO read.
+        let mut buf = vec![0u8; len];
+        let as_ = unsafe { &*(as_ptr as *const AddressSpace) };
+        for (i, byte) in buf.iter_mut().enumerate() {
+            *byte = as_.read(GPA::new(pa + i as u64), 1) as u8;
+        }
+        buf
+    } else {
+        vec![0u8; len]
+    }
+}
+
+/// Helper: write guest memory at physical address.
+fn gdb_write_phys(ram_ptr: *const u8, _ram_size: u64, _guest_base: u64, ram_end: u64, as_ptr: u64, pa: u64, data: &[u8]) -> bool {
+    if pa >= RAM_BASE && pa + data.len() as u64 <= ram_end {
+        let off = pa.wrapping_sub(RAM_BASE);
+        let ptr = unsafe { (ram_ptr as *mut u8).add(off as usize) };
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+        }
+        true
+    } else if as_ptr != 0 {
+        let as_ = unsafe { &*(as_ptr as *const AddressSpace) };
+        for (i, &byte) in data.iter().enumerate() {
+            as_.write(GPA::new(pa + i as u64), 1, byte as u64);
+        }
+        true
+    } else {
+        false
+    }
+}
+
+impl FullSystemCpu {
+    /// Check GDB breakpoint at PC. Returns true if hit.
+    /// Called from exec loop before executing a TB.
+    /// Sets stop_reason=Breakpoint and requests pause as
+    /// side effects so check_monitor_pause will park.
+    pub fn gdb_check_breakpoint(&self, pc: u64) -> bool {
+        if let Some(ref gs) = self.gdb_state {
+            if gs.is_connected()
+                && gs.has_breakpoints()
+                && gs.hit_breakpoint(pc)
+            {
+                gs.set_stop_reason(
+                    machina_gdbstub::handler::StopReason::Breakpoint,
+                );
+                gs.request_pause();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if GDB stepping mode is active.
+    pub fn gdb_is_stepping(&self) -> bool {
+        if let Some(ref gs) = self.gdb_state {
+            gs.is_stepping()
+        } else {
+            false
+        }
+    }
+
+    /// Complete a single step: transition Stepping -> Paused.
+    pub fn gdb_complete_step(&self) {
+        if let Some(ref gs) = self.gdb_state {
+            gs.complete_step();
+        }
+    }
+}
+
+impl GdbTarget for FullSystemCpu {
+    fn read_registers(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(GDB_NUM_REGS * 8);
+        // x0-x31
+        for &val in &self.cpu.gpr {
+            buf.extend_from_slice(&val.to_le_bytes());
+        }
+        // pc
+        buf.extend_from_slice(&self.cpu.pc.to_le_bytes());
+        // f0-f31
+        for &val in &self.cpu.fpr {
+            buf.extend_from_slice(&val.to_le_bytes());
+        }
+        buf
+    }
+
+    fn write_registers(&mut self, data: &[u8]) -> bool {
+        if data.len() < GDB_NUM_REGS * 8 {
+            return false;
+        }
+        for i in 0..NUM_GPRS {
+            let off = i * 8;
+            self.cpu.gpr[i] = u64::from_le_bytes(
+                data[off..off + 8].try_into().unwrap(),
+            );
+        }
+        self.cpu.pc = u64::from_le_bytes(
+            data[NUM_GPRS * 8..NUM_GPRS * 8 + 8]
+                .try_into()
+                .unwrap(),
+        );
+        for i in 0..NUM_FPRS {
+            let off = (NUM_GPRS + 1 + i) * 8;
+            self.cpu.fpr[i] = u64::from_le_bytes(
+                data[off..off + 8].try_into().unwrap(),
+            );
+        }
+        true
+    }
+
+    fn read_register(&self, reg: usize) -> Vec<u8> {
+        match reg {
+            0..=31 => self.cpu.gpr[reg].to_le_bytes().to_vec(),
+            32 => self.cpu.pc.to_le_bytes().to_vec(),
+            33..=64 => {
+                self.cpu.fpr[reg - 33].to_le_bytes().to_vec()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn write_register(&mut self, reg: usize, val: &[u8]) -> bool {
+        if val.len() < 8 {
+            return false;
+        }
+        let v = u64::from_le_bytes(val[..8].try_into().unwrap());
+        match reg {
+            0 => { /* x0 is hardwired to 0 */ }
+            1..=31 => self.cpu.gpr[reg] = v,
+            32 => self.cpu.pc = v,
+            33..=64 => self.cpu.fpr[reg - 33] = v,
+            _ => return false,
+        }
+        true
+    }
+
+    fn read_memory(&self, addr: u64, len: usize) -> Vec<u8> {
+        gdb_read_phys(
+            self.ram_ptr,
+            self.ram_size,
+            self.cpu.guest_base,
+            self.cpu.ram_end,
+            self.cpu.as_ptr,
+            addr,
+            len,
+        )
+    }
+
+    fn write_memory(&mut self, addr: u64, data: &[u8]) -> bool {
+        gdb_write_phys(
+            self.ram_ptr,
+            self.ram_size,
+            self.cpu.guest_base,
+            self.cpu.ram_end,
+            self.cpu.as_ptr,
+            addr,
+            data,
+        )
+    }
+
+    fn set_breakpoint(&mut self, type_: u8, addr: u64, _kind: u32) -> bool {
+        if let Some(ref gs) = self.gdb_state {
+            match type_ {
+                0 | 1 => gs.set_breakpoint(addr),
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    fn remove_breakpoint(&mut self, type_: u8, addr: u64, _kind: u32) -> bool {
+        if let Some(ref gs) = self.gdb_state {
+            match type_ {
+                0 | 1 => gs.remove_breakpoint(addr),
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    fn resume(&mut self) {
+        if let Some(ref gs) = self.gdb_state {
+            gs.request_resume();
+        }
+    }
+
+    fn step(&mut self) {
+        if let Some(ref gs) = self.gdb_state {
+            gs.request_step();
+        }
+    }
+
+    fn get_pc(&self) -> u64 {
+        self.cpu.pc
+    }
+
+    fn get_stop_reason(&self) -> StopReason {
+        if let Some(ref gs) = self.gdb_state {
+            gs.get_stop_reason()
+        } else {
+            StopReason::Breakpoint
+        }
+    }
 }

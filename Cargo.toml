@@ -18,6 +18,7 @@ members = [
     "util",
     "memory",
     "monitor",
+    "gdbstub",
     "system",
     "hw/core",
     "hw/intc",
@@ -47,6 +48,7 @@ machina-hw-char     = { version = "0.1.2", path = "hw/char" }
 machina-hw-intc     = { version = "0.1.2", path = "hw/intc" }
 machina-hw-virtio   = { version = "0.1.2", path = "hw/virtio" }
 machina-system      = { version = "0.1.2", path = "system" }
+machina-gdbstub     = { version = "0.1.2", path = "gdbstub" }
 machina-hw-riscv    = { version = "0.1.2", path = "hw/riscv" }
 machina-tests       = { version = "0.1.2", path = "tests" }
 machina-mtest       = { version = "0.1.2", path = "tests/mtest" }
@@ -84,4 +86,5 @@ machina-system   = { workspace = true }
 machina-difftest = { workspace = true }
 machina-monitor  = { workspace = true }
 machina-hw-core  = { workspace = true }
+machina-gdbstub  = { workspace = true }
 libc             = { workspace = true }

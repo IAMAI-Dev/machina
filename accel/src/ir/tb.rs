@@ -220,19 +220,10 @@ pub struct JumpCache {
     generation: u64,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct JumpCacheEntry {
     tb_idx: Option<usize>,
     gen: u64,
-}
-
-impl Default for JumpCacheEntry {
-    fn default() -> Self {
-        Self {
-            tb_idx: None,
-            gen: 0,
-        }
-    }
 }
 
 impl Clone for JumpCache {

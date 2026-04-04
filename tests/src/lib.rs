@@ -11,6 +11,8 @@ mod decode;
 #[cfg(test)]
 mod exec;
 #[cfg(test)]
+mod gdbstub;
+#[cfg(test)]
 mod frontend;
 #[cfg(test)]
 mod hw_aclint;

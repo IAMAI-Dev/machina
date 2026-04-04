@@ -125,4 +125,20 @@ pub trait GuestCpu {
     fn gdb_write_register(&mut self, _reg: usize, _buf: &[u8]) -> usize {
         0
     }
+
+    /// Check if GDB single-step mode is active.
+    fn gdb_single_step(&self) -> bool {
+        false
+    }
+
+    /// Complete a GDB single step (transition to paused).
+    fn gdb_complete_step(&self) {}
+
+    /// Check if a GDB breakpoint is set at `pc`.
+    /// Returns true if a breakpoint was hit, in which
+    /// case the exec loop should skip TB execution and
+    /// proceed to the pause/resume check.
+    fn gdb_check_breakpoint(&self, _pc: u64) -> bool {
+        false
+    }
 }

@@ -1,6 +1,7 @@
 // machina-system: CPU management and GuestCpu bridge.
 
 pub mod cpus;
+pub mod gdb;
 
 pub use cpus::FullSystemCpu;
 
@@ -55,6 +56,10 @@ impl CpuManager {
 
     /// Run all owned CPUs. For single-CPU, runs on the
     /// current thread. Blocks until execution exits.
+    ///
+    /// When GDB is active, after the exec loop pauses,
+    /// this method hands control to the GDB server to
+    /// process commands synchronously on this thread.
     ///
     /// # Safety
     /// Each CPU's `env_ptr()` must return a valid pointer

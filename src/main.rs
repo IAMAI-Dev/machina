@@ -36,6 +36,12 @@ fn usage() {
     );
     eprintln!("  -drive file=<path>  Attach raw disk image");
     eprintln!("  -monitor stdio|tcp:host:port  Monitor console");
+    eprintln!("  -s            Shorthand for -gdb tcp::1234");
+    eprintln!("  -S            Freeze CPU at startup");
+    eprintln!(
+        "  -gdb dev      GDB server device \
+         (e.g. tcp::1234)"
+    );
     eprintln!("  -h, --help    Show this help");
 }
 
@@ -48,6 +54,8 @@ struct CliArgs {
     difftest: bool,
     drive: Option<PathBuf>,
     monitor: Option<String>,
+    gdb: Option<String>,
+    start_paused: bool,
 }
 
 impl Default for CliArgs {
@@ -61,6 +69,8 @@ impl Default for CliArgs {
             difftest: false,
             drive: None,
             monitor: None,
+            gdb: None,
+            start_paused: false,
         }
     }
 }
@@ -137,6 +147,25 @@ fn parse_args() -> Result<CliArgs, String> {
                     return Err(format!("-monitor: unsupported: {}", s));
                 }
             }
+            "-s" => {
+                cli.gdb = Some("tcp::1234".to_string());
+            }
+            "-S" => {
+                cli.start_paused = true;
+            }
+            "-gdb" => {
+                i += 1;
+                let s =
+                    args.get(i).ok_or("-gdb requires argument")?;
+                if s.starts_with("tcp:") || s == "stdio" {
+                    cli.gdb = Some(s.clone());
+                } else {
+                    return Err(format!(
+                        "-gdb: unsupported: {}",
+                        s
+                    ));
+                }
+            }
             "-h" | "--help" => {
                 usage();
                 machina_hw_core::chardev::restore_terminal();
@@ -192,6 +221,7 @@ fn run_machine_cycle(
         std::sync::Mutex<machina_monitor::service::MonitorService>,
     >,
     htif_tohost: Option<u64>,
+    gdb_state: Option<Arc<machina_system::gdb::GdbState>>,
 ) -> Option<ShutdownReason> {
     let mut machine = RefMachine::new();
 
@@ -315,6 +345,10 @@ fn run_machine_cycle(
         ms.set_wfi_waker(wfi_waker.clone());
         ms.set_stop_flag(Arc::clone(&stop_flag));
         fs_cpu.set_monitor_state(Arc::clone(ms));
+    }
+    if let Some(ref gs) = gdb_state {
+        fs_cpu.set_gdb_state(Arc::clone(gs));
+        gs.set_mem_access(ram_ptr, ram_size, 0x8000_0000, as_ptr as u64);
     }
     cpu_mgr.add_cpu(fs_cpu);
 
@@ -451,6 +485,65 @@ fn main() {
         }
     }
 
+    // GDB stub setup.
+    let gdb_state: Option<Arc<machina_system::gdb::GdbState>> =
+        if cli.gdb.is_some() {
+            let gs =
+                Arc::new(machina_system::gdb::GdbState::new());
+            if cli.start_paused {
+                gs.set_connected(true);
+            }
+            Some(gs)
+        } else {
+            None
+        };
+
+    // GDB accept+server thread.
+    if let Some(ref gdb_dev) = cli.gdb {
+        if let Some(addr) = gdb_dev.strip_prefix("tcp:") {
+            let gs = gdb_state.as_ref().unwrap().clone();
+            let addr = addr.to_string();
+            std::thread::spawn(move || {
+                let listener =
+                    std::net::TcpListener::bind(&addr)
+                        .unwrap_or_else(|e| {
+                            eprintln!(
+                                "machina: gdb bind: {}",
+                                e
+                            );
+                            process::exit(1);
+                        });
+                eprintln!(
+                    "machina: gdbstub waiting on {}",
+                    addr
+                );
+                let (stream, _) =
+                    listener.accept().unwrap();
+                eprintln!(
+                    "machina: gdb client connected"
+                );
+                // The server runs a simplified RSP loop.
+                // It communicates with the exec loop via
+                // GdbState (pause/resume/breakpoints).
+                // Register access is done while CPU is
+                // paused via a shared snapshot.
+                gs.set_connected(true);
+                if let Err(e) =
+                    machina_system::gdb::serve(
+                        stream, &gs,
+                    )
+                {
+                    eprintln!(
+                        "machina: gdb error: {}",
+                        e
+                    );
+                }
+                gs.set_connected(false);
+            });
+            eprintln!("machina: gdb on {}", gdb_dev);
+        }
+    }
+
     // Outer loop: supports machine reset via SiFive Test.
     loop {
         eprintln!("machina: entering execution loop");
@@ -459,12 +552,14 @@ fn main() {
         } else {
             None
         };
+        let gs = gdb_state.as_ref().map(Arc::clone);
         let reason = run_machine_cycle(
             &opts,
             ram_size,
             ms,
             Arc::clone(&monitor_svc),
             htif_tohost,
+            gs,
         );
 
         match reason {
