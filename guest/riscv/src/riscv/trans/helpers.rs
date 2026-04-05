@@ -63,6 +63,23 @@ pub extern "C" fn helper_remw64(a: i64, b: i64) -> i64 {
     r as i64 // sign-extend
 }
 
+// ── Zbb: orc.b helper ─────────────────────────────
+// OR-combine bytes: for each byte of the input, the
+// result byte is 0xFF if any bit was set, else 0x00.
+
+/// Zbb orc.b helper.
+#[no_mangle]
+pub extern "C" fn helper_orc_b(val: u64) -> u64 {
+    let mut r = 0u64;
+    for i in 0..8 {
+        let byte = (val >> (i * 8)) & 0xFF;
+        if byte != 0 {
+            r |= 0xFF << (i * 8);
+        }
+    }
+    r
+}
+
 /// SC helper: check reservation, conditionally store.
 /// Returns 0 on success, 1 on failure.
 ///
