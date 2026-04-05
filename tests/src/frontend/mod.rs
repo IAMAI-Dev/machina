@@ -6,6 +6,7 @@ mod difftest;
 mod riscv_zba;
 mod riscv_zbb;
 mod riscv_zbc;
+mod riscv_zbs;
 
 use machina_accel::code_buffer::CodeBuffer;
 use machina_accel::ir::tb::{
