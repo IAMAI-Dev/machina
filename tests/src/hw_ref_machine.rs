@@ -80,8 +80,11 @@ fn test_ref_machine_uart_is_realized_via_sysbus() {
         .iter()
         .any(|mapping| mapping.owner == "aclint0"));
 
-    let uart = m.uart().lock().unwrap();
-    assert_eq!(uart.chardev_property(), Some("/machine/chardev/uart0"));
+    let uart = m.uart();
+    assert_eq!(
+        uart.chardev_property().as_deref(),
+        Some("/machine/chardev/uart0")
+    );
 }
 
 #[test]
@@ -328,7 +331,7 @@ fn test_uart_tx_through_machine() {
     m.init(&default_opts()).expect("init failed");
 
     {
-        let mut uart = m.uart().lock().unwrap();
+        let uart = m.uart();
         uart.write(0, 0x58); // 'X'
         let lsr = uart.read(5);
         assert_ne!(lsr & 0x20, 0, "THRE should remain set after TX");
@@ -342,13 +345,13 @@ fn test_uart_rx_irq_to_plic() {
 
     // Enable RX interrupt on UART.
     {
-        let mut uart = m.uart().lock().unwrap();
+        let uart = m.uart();
         uart.write(1, 0x01);
     }
 
     // Receive a byte.
     {
-        let mut uart = m.uart().lock().unwrap();
+        let uart = m.uart();
         uart.receive(0x42);
         assert!(uart.irq_pending(), "UART IRQ should be pending");
     }
@@ -365,7 +368,7 @@ fn test_uart_rx_irq_to_plic() {
 
     // Read RBR to clear the IRQ.
     {
-        let mut uart = m.uart().lock().unwrap();
+        let uart = m.uart();
         let _ = uart.read(0);
         assert!(!uart.irq_pending(), "UART IRQ should be cleared after read");
     }

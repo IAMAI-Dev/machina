@@ -164,7 +164,7 @@ pub struct RefMachine {
     mrom_block: Option<Arc<RamBlock>>,
     plic: Option<Arc<Plic>>,
     aclint: Option<Arc<Mutex<Aclint>>>,
-    uart: Option<Arc<Mutex<Uart16550>>>,
+    uart: Option<Arc<Uart16550>>,
     uart_chardev: Option<Arc<Mutex<ChardevObject>>>,
     virtio_mmio: Option<VirtioMmio>,
     sifive_test: Option<Arc<SifiveTest>>,
@@ -288,7 +288,7 @@ impl RefMachine {
             infos.push(aclint.lock().unwrap().object_info());
         }
         if let Some(uart) = &self.uart {
-            infos.push(uart.lock().unwrap().object_info());
+            infos.push(uart.object_info());
         }
         if let Some(virtio_mmio) = &self.virtio_mmio {
             infos.push(virtio_mmio.object_info());
@@ -307,9 +307,8 @@ impl RefMachine {
         f: impl FnOnce(&dyn MDevice) -> T,
     ) -> Option<T> {
         if let Some(uart) = &self.uart {
-            let uart = uart.lock().unwrap();
             if Self::object_matches(object_ref, &uart.object_info()) {
-                return Some(f(&*uart));
+                return Some(uart.with_mdevice(f));
             }
         }
         if let Some(plic) = &self.plic {
@@ -357,7 +356,7 @@ impl RefMachine {
         self.aclint.as_ref().expect("machine not initialized")
     }
 
-    pub fn uart(&self) -> &Arc<Mutex<Uart16550>> {
+    pub fn uart(&self) -> &Arc<Uart16550> {
         self.uart.as_ref().expect("machine not initialized")
     }
 
@@ -692,19 +691,16 @@ impl Machine for RefMachine {
         }
         self.aclint = Some(Arc::clone(&aclint));
 
-        // UART0 is migrated through the MOM sysbus path.
-        let uart = Arc::new(Mutex::new(Uart16550::new_named("uart0")));
-        {
-            let mut u = uart.lock().unwrap();
-            u.set_chardev_property("/machine/chardev/uart0")?;
-            u.attach_to_bus(&mut sysbus)?;
-            let uart_region = MemoryRegion::io(
-                "uart0",
-                UART0_SIZE,
-                Arc::new(Uart16550Mmio(Arc::clone(&uart))),
-            );
-            u.register_mmio(uart_region, GPA::new(UART0_BASE))?;
-        }
+        // UART0 — interior mutability, no outer Mutex.
+        let uart = Arc::new(Uart16550::new_named("uart0"));
+        uart.set_chardev_property("/machine/chardev/uart0")?;
+        uart.attach_to_bus(&mut sysbus)?;
+        let uart_region = MemoryRegion::io(
+            "uart0",
+            UART0_SIZE,
+            Arc::new(Uart16550Mmio(Arc::clone(&uart))),
+        );
+        uart.register_mmio(uart_region, GPA::new(UART0_BASE))?;
         self.uart = Some(uart);
 
         // SiFive Test (system reset/shutdown).
@@ -840,9 +836,6 @@ impl Machine for RefMachine {
         {
             let backend: Box<dyn Chardev + Send> = if opts.nographic {
                 let mut sc = StdioChardev::new();
-                // Install monitor callbacks if
-                // monitor_cb/quit_cb were set
-                // on self by the caller.
                 if let Some(ref qcb) = self.quit_cb {
                     sc.set_quit_cb(Arc::clone(qcb));
                 }
@@ -859,10 +852,10 @@ impl Machine for RefMachine {
             let uart_for_rx = Arc::clone(self.uart.as_ref().unwrap());
             let rx_cb: Arc<Mutex<dyn FnMut(u8) + Send>> =
                 Arc::new(Mutex::new(move |byte: u8| {
-                    uart_for_rx.lock().unwrap().receive(byte);
+                    uart_for_rx.receive(byte);
                 }));
 
-            let mut u = self.uart.as_ref().unwrap().lock().unwrap();
+            let u = self.uart.as_ref().unwrap();
             u.attach_irq(uart_irq_line)?;
             u.attach_chardev(fe)?;
             u.realize_onto(
@@ -888,7 +881,7 @@ impl Machine for RefMachine {
             aclint.lock().unwrap().reset_runtime();
         }
         if let Some(uart) = &self.uart {
-            uart.lock().unwrap().reset_runtime();
+            uart.reset_runtime();
         }
         if let Some(virtio_mmio) = &mut self.virtio_mmio {
             virtio_mmio.reset_runtime();
