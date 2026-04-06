@@ -478,7 +478,24 @@ impl RefMachine {
         Ok(())
     }
 
+    /// Generate FDT with optional initrd range and cmdline.
+    pub fn generate_fdt_with(
+        &self,
+        initrd_range: Option<(u64, u64)>,
+        cmdline: Option<&str>,
+    ) -> Vec<u8> {
+        self.generate_fdt_inner(initrd_range, cmdline)
+    }
+
     fn generate_fdt(&self) -> Vec<u8> {
+        self.generate_fdt_inner(None, self.kernel_cmdline.as_deref())
+    }
+
+    fn generate_fdt_inner(
+        &self,
+        initrd_range: Option<(u64, u64)>,
+        cmdline: Option<&str>,
+    ) -> Vec<u8> {
         let mut fdt = FdtBuilder::new();
         let plic_mapping = self.realized_sysbus_mapping("plic0");
         let aclint_mapping = self.realized_sysbus_mapping("aclint0");
@@ -628,8 +645,18 @@ impl RefMachine {
             "stdout-path",
             &format!("/soc/serial@{:x}", uart_mapping.base.0),
         );
-        if let Some(ref cmdline) = self.kernel_cmdline {
+        if let Some(cmdline) = cmdline {
             fdt.property_string("bootargs", cmdline);
+        }
+        if let Some((start, end)) = initrd_range {
+            fdt.property_u32_list(
+                "linux,initrd-start",
+                &[(start >> 32) as u32, start as u32],
+            );
+            fdt.property_u32_list(
+                "linux,initrd-end",
+                &[(end >> 32) as u32, end as u32],
+            );
         }
         fdt.end_node();
 

@@ -266,8 +266,32 @@ pub fn boot_ref_machine(
         }
     }
 
+    // Load initrd (if provided) after the kernel.
+    let mut initrd_range: Option<(u64, u64)> = None;
+    if let Some(ref initrd_path) = machine.initrd_path {
+        let data = std::fs::read(initrd_path)?;
+        // Place initrd 32 MiB after kernel start.
+        let initrd_start = RAM_BASE + KERNEL_OFFSET + 0x200_0000;
+        let initrd_end = initrd_start + data.len() as u64;
+        let as_ = machine.address_space();
+        loader::load_binary(
+            &data,
+            GPA::new(initrd_start),
+            as_,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error> {
+            e.into()
+        })?;
+        initrd_range = Some((initrd_start, initrd_end));
+    }
+
+    // Regenerate FDT with initrd/bootargs info.
+    let fdt = machine.generate_fdt_with(
+        initrd_range,
+        machine.kernel_cmdline.as_deref(),
+    );
+
     // Place FDT at top of RAM, aligned to 8 bytes.
-    let fdt = machine.fdt_blob().to_vec();
     let fdt_len = fdt.len() as u64;
     let ram_size = machine.ram_size();
     if fdt_len > ram_size {
