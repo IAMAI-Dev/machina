@@ -19,8 +19,11 @@ use machina_memory::address_space::AddressSpace;
 use machina_memory::region::MemoryRegion;
 use machina_system::cpus::{
     fault_cause_offset, fault_pc_offset, machina_mem_read, machina_mem_write,
-    tlb_offsets, tlb_ptr_offset, FullSystemCpu, SharedMip, RAM_BASE, TLB_SIZE,
+    tlb_offsets, tlb_ptr_offset, FullSystemCpu, SharedMip, TLB_SIZE,
 };
+
+/// Test RAM base address (matches RISC-V virt standard).
+const RAM_BASE: u64 = 0x8000_0000;
 
 /// Build a SoftMmuConfig for test ExecEnv.
 fn test_mmu_config() -> SoftMmuConfig {
@@ -85,6 +88,7 @@ fn setup_fullsys(
         FullSystemCpu::new(
             cpu,
             ram_ptr,
+            RAM_BASE,
             ram_size,
             shared_mip,
             wfi_waker,
@@ -692,6 +696,7 @@ fn test_fullsys_mmio_observable_dispatch() {
         FullSystemCpu::new(
             cpu,
             ram_ptr,
+            RAM_BASE,
             ram_size,
             shared_mip,
             wfi_waker,

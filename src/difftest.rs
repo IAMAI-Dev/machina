@@ -22,7 +22,7 @@ use machina_hw_riscv::sifive_test::ShutdownReason;
 use machina_memory::address_space::AddressSpace;
 use machina_system::cpus::{
     fault_cause_offset, fault_pc_offset, machina_mem_read, machina_mem_write,
-    tlb_offsets, tlb_ptr_offset, FullSystemCpu, RAM_BASE, TLB_SIZE,
+    tlb_offsets, tlb_ptr_offset, FullSystemCpu, TLB_SIZE,
 };
 
 const GDB_PORT: u16 = 1234;
@@ -75,6 +75,7 @@ pub fn run_difftest(opts: &MachineOpts, ram_mib: u64) {
         FullSystemCpu::new(
             cpu0,
             ram_ptr,
+            machina_hw_riscv::ref_machine::RAM_BASE,
             ram_size,
             shared_mip,
             wfi_waker.clone(),
@@ -266,7 +267,7 @@ fn skip_mrom<B: HostCodeGen>(
     cpu.set_jmp_env(jmp_ptr as u64);
 
     for _ in 0..10000 {
-        if cpu.get_pc() >= RAM_BASE {
+        if cpu.get_pc() >= machina_hw_riscv::ref_machine::RAM_BASE {
             return;
         }
         if cpu.pending_interrupt() {

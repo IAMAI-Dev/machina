@@ -81,8 +81,12 @@ pub struct RiscvCpu {
     /// dispatch from JIT helpers. Cast from *const
     /// AddressSpace. Zero means not initialized.
     pub as_ptr: u64,
+    /// Start of the RAM window (board-specific, e.g.
+    /// 0x8000_0000 for RISC-V virt). Set by the system
+    /// layer at CPU creation; JIT helpers use this to
+    /// decide RAM vs MMIO.
+    pub ram_base: u64,
     /// End of the RAM window (ram_base + ram_size).
-    /// JIT helpers use this to decide RAM vs MMIO.
     pub ram_end: u64,
     /// Pointer to TbStore's code-page bitmap (AtomicU8
     /// array). Store helpers check this to detect writes
@@ -212,6 +216,7 @@ impl RiscvCpu {
             mem_fault_cause: 0,
             mem_fault_tval: 0,
             as_ptr: 0,
+            ram_base: 0,
             ram_end: 0,
             code_pages_ptr: 0,
             code_pages_len: 0,

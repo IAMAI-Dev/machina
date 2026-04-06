@@ -325,10 +325,12 @@ fn run_machine_cycle(
     cpu_mgr.set_wfi_waker(wfi_waker.clone());
 
     let stop_flag = cpu_mgr.running_flag();
+    let ram_base = machina_hw_riscv::ref_machine::RAM_BASE;
     let mut fs_cpu = unsafe {
         FullSystemCpu::new(
             cpu0,
             ram_ptr,
+            ram_base,
             ram_size,
             shared_mip,
             wfi_waker.clone(),
@@ -359,7 +361,7 @@ fn run_machine_cycle(
     }
     if let Some(ref gs) = gdb_state {
         fs_cpu.set_gdb_state(Arc::clone(gs));
-        gs.set_mem_access(ram_ptr, ram_size, 0x8000_0000, as_ptr as u64);
+        gs.set_mem_access(ram_ptr, ram_size, ram_base, as_ptr as u64);
     }
     cpu_mgr.add_cpu(fs_cpu);
     // Connect neg_align pointer to ACLINT so timer

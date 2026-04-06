@@ -25,7 +25,8 @@ const NUM_GPRS: usize = 32;
 const NUM_FPRS: usize = 32;
 /// Total GDB registers: x0-x31 + pc + f0-f31 = 65.
 const GDB_NUM_REGS: usize = NUM_GPRS + 1 + NUM_FPRS;
-pub const RAM_BASE: u64 = 0x8000_0000;
+// RAM_BASE is no longer hardcoded here — it is passed
+// as `ram_base` to FullSystemCpu::new by the board.
 const MSTATUS_SIE: u64 = 1 << 1;
 const MSTATUS_MIE: u64 = 1 << 3;
 const MSTATUS_MPRV: u64 = 1 << 17;
@@ -133,12 +134,14 @@ impl FullSystemCpu {
     ///
     /// # Safety
     /// `ram_ptr` must point to valid mmap'd memory of
-    /// `ram_size` bytes backing guest RAM at RAM_BASE.
-    /// `as_ref` must point to an AddressSpace that
+    /// `ram_size` bytes backing guest RAM at `ram_base`.
+    /// `as_ptr` must point to an AddressSpace that
     /// outlives FullSystemCpu.
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn new(
         mut cpu: RiscvCpu,
         ram_ptr: *const u8,
+        ram_base: u64,
         ram_size: u64,
         shared_mip: SharedMip,
         wfi_waker: Arc<WfiWaker>,
@@ -146,9 +149,10 @@ impl FullSystemCpu {
         stop_flag: Arc<AtomicBool>,
     ) -> Self {
         cpu.guest_base =
-            (ram_ptr as usize).wrapping_sub(RAM_BASE as usize) as u64;
+            (ram_ptr as usize).wrapping_sub(ram_base as usize) as u64;
         cpu.as_ptr = as_ptr as u64;
-        cpu.ram_end = RAM_BASE + ram_size;
+        cpu.ram_base = ram_base;
+        cpu.ram_end = ram_base + ram_size;
         Self {
             cpu,
             ram_ptr,
@@ -169,7 +173,7 @@ impl FullSystemCpu {
     /// Configure HTIF tohost polling address (GPA).
     /// The address must be within RAM.
     pub fn set_htif_tohost(&mut self, gpa: u64) {
-        let off = gpa.wrapping_sub(RAM_BASE);
+        let off = gpa.wrapping_sub(self.cpu.ram_base);
         if off < self.ram_size {
             self.htif_tohost_off = Some(off);
         }
@@ -221,9 +225,9 @@ impl FullSystemCpu {
     /// Resolve a physical address to (host_ptr, base, size)
     /// for instruction fetch.
     fn resolve_fetch_region(&self, pa: u64) -> (*const u8, u64, u64) {
-        let ram_off = pa.wrapping_sub(RAM_BASE);
+        let ram_off = pa.wrapping_sub(self.cpu.ram_base);
         if ram_off < self.ram_size {
-            return (self.ram_ptr, RAM_BASE, self.ram_size);
+            return (self.ram_ptr, self.cpu.ram_base, self.ram_size);
         }
         if !self.mrom_ptr.is_null() {
             let mrom_off = pa.wrapping_sub(self.mrom_base);
@@ -294,7 +298,7 @@ impl FullSystemCpu {
                     // the same page (code shares TLB entry).
                     let ram_end = self.cpu.ram_end;
                     let gb = self.cpu.guest_base as usize;
-                    let addend = if pa >= RAM_BASE && pa < ram_end {
+                    let addend = if pa >= self.cpu.ram_base && pa < ram_end {
                         let gva_page =
                             vpc & machina_guest_riscv::riscv::mmu::PAGE_MASK;
                         let pa_page =
@@ -407,9 +411,9 @@ impl GuestCpu for FullSystemCpu {
 
         // Resolve phys_pc to host pointer and region size.
         let (region_ptr, region_base, region_size) = {
-            let ram_off = phys_pc.wrapping_sub(RAM_BASE);
+            let ram_off = phys_pc.wrapping_sub(self.cpu.ram_base);
             if ram_off < self.ram_size {
-                (self.ram_ptr, RAM_BASE, self.ram_size)
+                (self.ram_ptr, self.cpu.ram_base, self.ram_size)
             } else if !self.mrom_ptr.is_null() {
                 let mrom_off = phys_pc.wrapping_sub(self.mrom_base);
                 if mrom_off < self.mrom_size {
@@ -1055,7 +1059,7 @@ unsafe fn translate_for_helper(
         }
         // Fill TLB with identity mapping.
         let ram_end = cpu.ram_end;
-        let addend = if gva >= RAM_BASE && gva < ram_end {
+        let addend = if gva >= cpu.ram_base && gva < ram_end {
             cpu.guest_base as usize
         } else {
             TLB_MMIO_ADDEND
@@ -1090,7 +1094,7 @@ unsafe fn translate_for_helper(
             &mut mem_write,
         ) {
             Ok(pa) => {
-                let addend = if pa >= RAM_BASE && pa < ram_end {
+                let addend = if pa >= cpu.ram_base && pa < ram_end {
                     let gva_page = gva & PAGE_MASK;
                     let pa_page = pa & PAGE_MASK;
                     (guest_base as usize)
@@ -1123,7 +1127,7 @@ unsafe fn translate_for_helper(
 unsafe fn read_phys_sized(cpu: *const RiscvCpu, pa: u64, size: u32) -> u64 {
     let cpu_ref = &*cpu;
     let ram_end = cpu_ref.ram_end;
-    if pa >= RAM_BASE && pa < ram_end {
+    if pa >= cpu_ref.ram_base && pa < ram_end {
         let gb = cpu_ref.guest_base;
         let ptr = (gb + pa) as *const u8;
         match size {
@@ -1148,7 +1152,7 @@ unsafe fn read_phys_sized(cpu: *const RiscvCpu, pa: u64, size: u32) -> u64 {
 unsafe fn write_phys_sized(cpu: *mut RiscvCpu, pa: u64, val: u64, size: u32) {
     let cpu_ref = &*cpu;
     let ram_end = cpu_ref.ram_end;
-    if pa >= RAM_BASE && pa < ram_end {
+    if pa >= cpu_ref.ram_base && pa < ram_end {
         let gb = cpu_ref.guest_base;
         let ptr = (gb + pa) as *mut u8;
         match size {
@@ -1204,7 +1208,7 @@ unsafe fn write_phys(cpu: *mut RiscvCpu, pa: u64, val: u64) {
 /// Check whether a physical address range is backed by
 /// RAM or a mapped MMIO device.
 fn is_phys_backed(cpu: &RiscvCpu, pa: u64, size: u32) -> bool {
-    if pa >= RAM_BASE
+    if pa >= cpu.ram_base
         && pa
             .checked_add(size as u64)
             .is_some_and(|end| end <= cpu.ram_end)
@@ -1369,19 +1373,18 @@ pub unsafe extern "C" fn machina_csr_op(
 /// Helper: read guest memory at physical address.
 fn gdb_read_phys(
     ram_ptr: *const u8,
-    _ram_size: u64,
-    _guest_base: u64,
+    ram_base: u64,
     ram_end: u64,
     as_ptr: u64,
     pa: u64,
     len: usize,
 ) -> Vec<u8> {
-    if pa >= RAM_BASE
+    if pa >= ram_base
         && pa
             .checked_add(len as u64)
             .is_some_and(|end| end <= ram_end)
     {
-        let off = pa.wrapping_sub(RAM_BASE);
+        let off = pa.wrapping_sub(ram_base);
         let ptr = unsafe { ram_ptr.add(off as usize) };
         let mut buf = vec![0u8; len];
         unsafe {
@@ -1404,19 +1407,18 @@ fn gdb_read_phys(
 /// Helper: write guest memory at physical address.
 fn gdb_write_phys(
     ram_ptr: *const u8,
-    _ram_size: u64,
-    _guest_base: u64,
+    ram_base: u64,
     ram_end: u64,
     as_ptr: u64,
     pa: u64,
     data: &[u8],
 ) -> bool {
-    if pa >= RAM_BASE
+    if pa >= ram_base
         && pa
             .checked_add(data.len() as u64)
             .is_some_and(|end| end <= ram_end)
     {
-        let off = pa.wrapping_sub(RAM_BASE);
+        let off = pa.wrapping_sub(ram_base);
         let ptr = unsafe { (ram_ptr as *mut u8).add(off as usize) };
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
@@ -1587,8 +1589,7 @@ impl GdbTarget for FullSystemCpu {
     fn read_memory(&self, addr: u64, len: usize) -> Vec<u8> {
         gdb_read_phys(
             self.ram_ptr,
-            self.ram_size,
-            self.cpu.guest_base,
+            self.cpu.ram_base,
             self.cpu.ram_end,
             self.cpu.as_ptr,
             addr,
@@ -1599,8 +1600,7 @@ impl GdbTarget for FullSystemCpu {
     fn write_memory(&mut self, addr: u64, data: &[u8]) -> bool {
         gdb_write_phys(
             self.ram_ptr,
-            self.ram_size,
-            self.cpu.guest_base,
+            self.cpu.ram_base,
             self.cpu.ram_end,
             self.cpu.as_ptr,
             addr,
