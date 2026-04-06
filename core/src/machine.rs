@@ -15,6 +15,7 @@ pub struct MachineOpts {
     pub append: Option<String>,
     pub nographic: bool,
     pub drive: Option<PathBuf>,
+    pub initrd: Option<PathBuf>,
 }
 
 pub struct MachineState {

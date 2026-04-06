@@ -56,6 +56,8 @@ struct CliArgs {
     monitor: Option<String>,
     gdb: Option<String>,
     start_paused: bool,
+    append: Option<String>,
+    initrd: Option<PathBuf>,
 }
 
 impl Default for CliArgs {
@@ -71,6 +73,8 @@ impl Default for CliArgs {
             monitor: None,
             gdb: None,
             start_paused: false,
+            append: None,
+            initrd: None,
         }
     }
 }
@@ -137,6 +141,20 @@ fn parse_args() -> Result<CliArgs, String> {
             "-device" => {
                 // Accept and skip for QEMU compat.
                 i += 1;
+            }
+            "-append" => {
+                i += 1;
+                let s = args
+                    .get(i)
+                    .ok_or("-append requires argument")?;
+                cli.append = Some(s.clone());
+            }
+            "-initrd" => {
+                i += 1;
+                let s = args
+                    .get(i)
+                    .ok_or("-initrd requires argument")?;
+                cli.initrd = Some(PathBuf::from(s));
             }
             "-monitor" => {
                 i += 1;
@@ -420,9 +438,10 @@ fn main() {
         cpu_count: 1,
         kernel: cli.kernel.clone(),
         bios: cli.bios.clone(),
-        append: None,
+        append: cli.append.clone(),
         nographic: cli.nographic,
         drive: cli.drive.clone(),
+        initrd: cli.initrd.clone(),
     };
 
     // Check -monitor stdio + -nographic conflict.

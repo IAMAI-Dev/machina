@@ -206,6 +206,8 @@ pub struct RefMachine {
     // Stored boot options (bios / kernel paths).
     pub(crate) bios_path: Option<PathBuf>,
     pub(crate) kernel_path: Option<PathBuf>,
+    pub(crate) initrd_path: Option<PathBuf>,
+    pub(crate) kernel_cmdline: Option<String>,
     // UART → PLIC IRQ line (source 10).
     uart_irq: Option<IrqLine>,
     // Monitor callbacks for StdioChardev.
@@ -237,6 +239,8 @@ impl RefMachine {
             wfi_waker: Arc::new(WfiWaker::new()),
             bios_path: None,
             kernel_path: None,
+            initrd_path: None,
+            kernel_cmdline: None,
             uart_irq: None,
             quit_cb: None,
             monitor_cb: None,
@@ -597,6 +601,7 @@ impl RefMachine {
         fdt.property_u32_list("reg", &self.sysbus_reg_cells("uart0"));
         fdt.property_u32("interrupts", REF_IRQMAP.uart0);
         fdt.property_u32("interrupt-parent", plic_phandle);
+        fdt.property_u32("clock-frequency", 3686400);
         fdt.end_node();
 
         // /soc/virtio_mmio@10001000 (if drive configured)
@@ -620,6 +625,9 @@ impl RefMachine {
             "stdout-path",
             &format!("/soc/serial@{:x}", uart_mapping.base.0),
         );
+        if let Some(ref cmdline) = self.kernel_cmdline {
+            fdt.property_string("bootargs", cmdline);
+        }
         fdt.end_node();
 
         fdt.end_node(); // root
@@ -657,6 +665,8 @@ impl Machine for RefMachine {
         self.cpu_count = opts.cpu_count;
         self.bios_path = opts.bios.clone();
         self.kernel_path = opts.kernel.clone();
+        self.initrd_path = opts.initrd.clone();
+        self.kernel_cmdline = opts.append.clone();
 
         // Create per-hart CPUs.
         {
