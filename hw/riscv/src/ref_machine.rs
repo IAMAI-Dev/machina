@@ -12,7 +12,7 @@ use machina_guest_riscv::riscv::cpu::RiscvCpu;
 use machina_hw_char::uart::{Uart16550, Uart16550Mmio};
 use machina_hw_core::bus::{SysBus, SysBusMapping};
 use machina_hw_core::chardev::{
-    CharFrontend, Chardev, ChardevObject, ChardevResolveError, ChardevResolver,
+    CharFrontend, Chardev, ChardevObject,
     NullChardev, StdioChardev,
 };
 use machina_hw_core::fdt::FdtBuilder;
@@ -30,40 +30,6 @@ use crate::sifive_test::SifiveTest;
 
 type MonitorCallback = Arc<Mutex<dyn FnMut(u8) + Send>>;
 
-struct RefMachineChardevResolver {
-    objects: Vec<Arc<Mutex<ChardevObject>>>,
-}
-
-impl ChardevResolver for RefMachineChardevResolver {
-    fn take_frontend(
-        &self,
-        path: &str,
-    ) -> Result<CharFrontend, ChardevResolveError> {
-        for object in &self.objects {
-            let mut object = object.lock().unwrap();
-            if object.object_path() == Some(path) {
-                return object.take_frontend().ok_or_else(|| {
-                    ChardevResolveError::BackendUnavailable(path.to_string())
-                });
-            }
-        }
-        Err(ChardevResolveError::UnknownPath(path.to_string()))
-    }
-
-    fn put_frontend(
-        &self,
-        path: &str,
-        frontend: CharFrontend,
-    ) -> Result<(), ChardevResolveError> {
-        for object in &self.objects {
-            let mut object = object.lock().unwrap();
-            if object.object_path() == Some(path) {
-                return object.put_frontend(frontend);
-            }
-        }
-        Err(ChardevResolveError::UnknownPath(path.to_string()))
-    }
-}
 
 // QEMU virt memory map base addresses.
 pub const MROM_BASE: u64 = 0x0000_1000;
@@ -329,13 +295,7 @@ impl RefMachine {
         None
     }
 
-    fn chardev_resolver(&self) -> RefMachineChardevResolver {
-        let mut objects = Vec::new();
-        if let Some(chardev) = &self.uart_chardev {
-            objects.push(Arc::clone(chardev));
-        }
-        RefMachineChardevResolver { objects }
-    }
+
 
     fn sysbus_reg_cells(&self, owner: &str) -> [u32; 4] {
         let mapping = self.realized_sysbus_mapping(owner);
