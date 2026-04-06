@@ -125,7 +125,7 @@ fn test_load_elf_simple() {
     // Append payload
     elf.extend_from_slice(&payload);
 
-    let info = load_elf(&elf, &as_).expect("load_elf failed");
+    let info = load_elf(&elf, 0, &as_).expect("load_elf failed");
     assert_eq!(info.entry, GPA::new(entry));
     assert_eq!(info.size, payload.len() as u64);
 
@@ -133,5 +133,59 @@ fn test_load_elf_simple() {
     for (i, &expected) in payload.iter().enumerate() {
         let actual = as_.read(GPA::new(p_paddr + i as u64), 1) as u8;
         assert_eq!(actual, expected, "mismatch at offset {i}");
+    }
+}
+
+#[test]
+fn test_load_elf_dyn_pie() {
+    // Build a minimal ELF-64 LE ET_DYN (PIE) with one
+    // PT_LOAD segment at vaddr 0x1000, then load it
+    // at base 0x100_0000 and verify relocation bias.
+    let as_ = make_ram_as(0x1000_0000);
+
+    let entry_rel: u64 = 0x1100;  // entry relative to vaddr 0
+    let p_vaddr: u64 = 0x1000;    // segment vaddr
+    let base: u64 = 0x100_0000;   // load base
+    let payload: [u8; 8] = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
+
+    // -- ELF header (64 bytes) --
+    let mut elf = vec![0u8; 64 + 56];
+
+    elf[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+    elf[4] = 2;  // ELFCLASS64
+    elf[5] = 1;  // ELFDATA2LSB
+    elf[6] = 1;  // EV_CURRENT
+    // e_type = ET_DYN (3)
+    elf[16..18].copy_from_slice(&3u16.to_le_bytes());
+    elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+    elf[24..32].copy_from_slice(&entry_rel.to_le_bytes());
+    elf[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff
+    elf[52..54].copy_from_slice(&64u16.to_le_bytes());  // e_ehsize
+    elf[54..56].copy_from_slice(&56u16.to_le_bytes());  // e_phentsize
+    elf[56..58].copy_from_slice(&1u16.to_le_bytes());   // e_phnum
+
+    // -- Program header (56 bytes at offset 64) --
+    let ph = 64usize;
+    elf[ph..ph + 4].copy_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+    let p_offset: u64 = 120;
+    elf[ph + 8..ph + 16].copy_from_slice(&p_offset.to_le_bytes());
+    elf[ph + 16..ph + 24].copy_from_slice(&p_vaddr.to_le_bytes()); // p_vaddr
+    elf[ph + 24..ph + 32].copy_from_slice(&p_vaddr.to_le_bytes()); // p_paddr
+    let filesz = payload.len() as u64;
+    elf[ph + 32..ph + 40].copy_from_slice(&filesz.to_le_bytes());
+    elf[ph + 40..ph + 48].copy_from_slice(&filesz.to_le_bytes());
+
+    elf.extend_from_slice(&payload);
+
+    let info = load_elf(&elf, base, &as_).expect("load_elf ET_DYN failed");
+    let expected = base + p_vaddr;
+    assert_eq!(info.entry, GPA::new(base + entry_rel));
+    assert!(info.bias.is_some());
+    assert_eq!(info.bias.unwrap(), base);
+    assert_eq!(info.size, filesz);
+
+    for (i, &exp) in payload.iter().enumerate() {
+        let actual = as_.read(GPA::new(expected + i as u64), 1) as u8;
+        assert_eq!(actual, exp, "mismatch at offset {i}");
     }
 }

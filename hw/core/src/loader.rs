@@ -9,6 +9,8 @@ pub struct LoadInfo {
     pub entry: GPA,
     /// Total bytes loaded.
     pub size: u64,
+    /// Load bias applied for ET_DYN images (None for ET_EXEC).
+    pub bias: Option<u64>,
 }
 
 /// Load a raw binary image at the given guest physical address.
@@ -21,6 +23,7 @@ pub fn load_binary(
     Ok(LoadInfo {
         entry: addr,
         size: data.len() as u64,
+        bias: None,
     })
 }
 
@@ -48,6 +51,7 @@ fn write_bytes(as_: &AddressSpace, base: GPA, data: &[u8]) {
 const EI_MAG: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELFCLASS64: u8 = 2;
 const ET_EXEC: u16 = 2;
+const ET_DYN: u16 = 3;
 const PT_LOAD: u32 = 1;
 const SHT_SYMTAB: u32 = 2;
 
@@ -56,45 +60,74 @@ const ELF64_PHDR_SIZE: usize = 56;
 const ELF64_SHDR_SIZE: usize = 64;
 const ELF64_SYM_SIZE: usize = 24;
 
-/// Load an ELF-64 binary into the address space and return
-/// the entry point.
-///
-/// Only `PT_LOAD` segments are processed.  The binary must
-/// be a little-endian ELF-64 executable (e.g. RISC-V).
-pub fn load_elf(data: &[u8], as_: &AddressSpace) -> Result<LoadInfo, String> {
+struct ElfHeader {
+    e_type: u16,
+    e_entry: u64,
+    e_phoff: usize,
+    e_phentsize: usize,
+    e_phnum: usize,
+}
+
+fn parse_elf_header(data: &[u8]) -> Result<ElfHeader, String> {
     if data.len() < ELF64_EHDR_SIZE {
         return Err("data too small for ELF header".into());
     }
-
-    // e_ident[0..4] = magic
     if data[0..4] != EI_MAG {
         return Err("bad ELF magic".into());
     }
-    // EI_CLASS
     if data[4] != ELFCLASS64 {
         return Err("not ELF-64".into());
     }
 
     let e_type = u16::from_le_bytes(data[16..18].try_into().unwrap());
-    if e_type != ET_EXEC {
-        return Err(format!("unsupported ELF type {e_type} (need ET_EXEC)"));
+    if e_type != ET_EXEC && e_type != ET_DYN {
+        return Err(format!(
+            "unsupported ELF type {e_type} \
+             (need ET_EXEC or ET_DYN)"
+        ));
     }
 
     let e_entry = u64::from_le_bytes(data[24..32].try_into().unwrap());
     let e_phoff = u64::from_le_bytes(data[32..40].try_into().unwrap()) as usize;
-    // e_shoff(40..48), e_flags(48..52), e_ehsize(52..54)
     let e_phentsize =
         u16::from_le_bytes(data[54..56].try_into().unwrap()) as usize;
     let e_phnum = u16::from_le_bytes(data[56..58].try_into().unwrap()) as usize;
 
     if e_phentsize < ELF64_PHDR_SIZE {
-        return Err(format!("phentsize {e_phentsize} < {ELF64_PHDR_SIZE}"));
+        return Err(format!(
+            "phentsize {e_phentsize} < {ELF64_PHDR_SIZE}"
+        ));
     }
+
+    Ok(ElfHeader {
+        e_type,
+        e_entry,
+        e_phoff,
+        e_phentsize,
+        e_phnum,
+    })
+}
+
+/// Load an ELF-64 binary into the address space and return
+/// the entry point.
+///
+/// For ET_EXEC segments are loaded at their `p_paddr`.
+/// For ET_DYN (PIE) segments are loaded relative to
+/// `base_addr`.  The `LoadInfo.bias` field carries the
+/// offset so the caller can relocate the entry address.
+pub fn load_elf(
+    data: &[u8],
+    base_addr: u64,
+    as_: &AddressSpace,
+) -> Result<LoadInfo, String> {
+    let hdr = parse_elf_header(data)?;
+
+    let is_dyn = hdr.e_type == ET_DYN;
 
     let mut total_loaded: u64 = 0;
 
-    for i in 0..e_phnum {
-        let off = e_phoff + i * e_phentsize;
+    for i in 0..hdr.e_phnum {
+        let off = hdr.e_phoff + i * hdr.e_phentsize;
         if off + ELF64_PHDR_SIZE > data.len() {
             return Err("phdr out of bounds".into());
         }
@@ -107,6 +140,8 @@ pub fn load_elf(data: &[u8], as_: &AddressSpace) -> Result<LoadInfo, String> {
         let p_offset =
             u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap())
                 as usize;
+        let p_vaddr =
+            u64::from_le_bytes(data[off + 16..off + 24].try_into().unwrap());
         let p_paddr =
             u64::from_le_bytes(data[off + 24..off + 32].try_into().unwrap());
         let p_filesz =
@@ -114,6 +149,14 @@ pub fn load_elf(data: &[u8], as_: &AddressSpace) -> Result<LoadInfo, String> {
                 as usize;
         let p_memsz =
             u64::from_le_bytes(data[off + 40..off + 48].try_into().unwrap());
+
+        // For ET_DYN: load address = base_addr + p_vaddr.
+        // For ET_EXEC: load address = p_paddr (absolute).
+        let load_addr = if is_dyn {
+            base_addr + p_vaddr
+        } else {
+            p_paddr
+        };
 
         if p_offset + p_filesz > data.len() {
             return Err(format!(
@@ -123,11 +166,11 @@ pub fn load_elf(data: &[u8], as_: &AddressSpace) -> Result<LoadInfo, String> {
         }
 
         let seg = &data[p_offset..p_offset + p_filesz];
-        write_bytes(as_, GPA::new(p_paddr), seg);
+        write_bytes(as_, GPA::new(load_addr), seg);
 
         // BSS: zero-fill [p_filesz .. p_memsz)
-        let bss_start = p_paddr + p_filesz as u64;
-        let bss_end = p_paddr + p_memsz;
+        let bss_start = load_addr + p_filesz as u64;
+        let bss_end = load_addr + p_memsz;
         let mut cur = bss_start;
         while cur < bss_end {
             let remain = bss_end - cur;
@@ -143,9 +186,19 @@ pub fn load_elf(data: &[u8], as_: &AddressSpace) -> Result<LoadInfo, String> {
         total_loaded += p_memsz;
     }
 
+    // For ET_DYN the actual entry = base_addr + e_entry.
+    let entry = if is_dyn {
+        base_addr + hdr.e_entry
+    } else {
+        hdr.e_entry
+    };
+
+    let bias = if is_dyn { Some(base_addr) } else { None };
+
     Ok(LoadInfo {
-        entry: GPA::new(e_entry),
+        entry: GPA::new(entry),
         size: total_loaded,
+        bias,
     })
 }
 

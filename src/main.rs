@@ -30,6 +30,7 @@ fn usage() {
     eprintln!("  -bios path    BIOS/firmware binary");
     eprintln!("  -kernel path  Kernel binary");
     eprintln!("  -nographic    Disable graphical output");
+    eprintln!("  -append args  Kernel command line arguments");
     eprintln!(
         "  --difftest    Instruction-level difftest \
          vs QEMU"
@@ -50,6 +51,7 @@ struct CliArgs {
     ram_mib: u64,
     bios: Option<PathBuf>,
     kernel: Option<PathBuf>,
+    append: Option<String>,
     nographic: bool,
     difftest: bool,
     drive: Option<PathBuf>,
@@ -67,6 +69,7 @@ impl Default for CliArgs {
             ram_mib: 128,
             bios: None,
             kernel: None,
+            append: None,
             nographic: false,
             difftest: false,
             drive: None,
@@ -118,6 +121,14 @@ fn parse_args() -> Result<CliArgs, String> {
             }
             "-nographic" => {
                 cli.nographic = true;
+            }
+            "-append" => {
+                i += 1;
+                cli.append = Some(
+                    args.get(i)
+                        .ok_or("-append requires argument")?
+                        .clone(),
+                );
             }
             "--difftest" => {
                 cli.difftest = true;
