@@ -295,21 +295,18 @@ fn test_ref_machine_irq_wiring() {
         );
     }
 
-    // Lower UART IRQ -> pending bit cleared.
+    // Lower UART IRQ. With edge-triggered semantics,
+    // pending stays set until claimed.
     m.uart_irq().lower();
     {
         let pending = m.plic().read(0x1000, 4);
-        assert_eq!(
+        assert_ne!(
             pending & (1 << 10),
             0,
-            "UART IRQ 10 should be cleared in PLIC"
+            "UART IRQ 10 stays pending until claimed \
+             (edge-triggered)"
         );
     }
-
-    // Verify CPU mip: MEI (11) should be low.
-    let cpus = m.cpus_lock();
-    let cpu = cpus[0].as_ref().unwrap();
-    assert_eq!(cpu.csr.mip & (1 << 11), 0, "MEI should be low initially");
 }
 
 #[test]
@@ -376,13 +373,14 @@ fn test_uart_rx_irq_to_plic() {
         assert!(!uart.irq_pending(), "UART IRQ should be cleared after read");
     }
 
-    // PLIC pending bit should now be clear.
+    // With edge-triggered PLIC, pending stays set until
+    // claimed even though the source was lowered.
     {
         let pending = m.plic().read(0x1000, 4);
-        assert_eq!(
+        assert_ne!(
             pending & (1 << 10),
             0,
-            "PLIC UART IRQ 10 should be cleared"
+            "PLIC UART IRQ 10 stays pending until claimed"
         );
     }
 }
@@ -482,13 +480,14 @@ fn test_irq_updates_cpu_mip() {
         "MEI should be set after PLIC source raise"
     );
 
-    // Lower UART IRQ.
+    // Lower UART IRQ. Edge-triggered: pending stays, so
+    // MEI remains asserted until claimed.
     m.uart_irq().lower();
 
-    assert_eq!(
+    assert_ne!(
         mip.load(Ordering::SeqCst) & (1 << 11),
         0,
-        "MEI should be cleared after IRQ lower"
+        "MEI stays set until claimed (edge-triggered)"
     );
 }
 

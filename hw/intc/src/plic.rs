@@ -185,20 +185,20 @@ impl Plic {
         }
     }
 
-    /// Set or clear a source interrupt and re-evaluate
-    /// outputs.  Tracks the wire level so that
-    /// level-triggered sources can be resampled on
-    /// complete.  Fully lock-free on the source layer.
+    /// Update the source wire level.  Only a rising edge
+    /// (0→1) latches the pending bit, matching QEMU
+    /// semantics and preventing interrupt storms when the
+    /// guest defers source-clearing to a task/bottom-half.
     pub fn set_irq(&self, source: u32, level: bool) {
         if source == 0 || source >= self.num_sources {
             return;
         }
-        if level {
-            self.source_level[source as usize].store(1, Ordering::Relaxed);
-        } else {
-            self.source_level[source as usize].store(0, Ordering::Relaxed);
+        let prev = self.source_level[source as usize]
+            .swap(level as u32, Ordering::Relaxed);
+        if level && prev == 0 {
+            // Rising edge: latch pending.
+            self.set_pending(source, true);
         }
-        self.set_pending(source, level);
         self.update_outputs();
     }
 
@@ -286,7 +286,11 @@ impl Plic {
 
     /// Complete (acknowledge) a previously claimed IRQ.
     /// If the source is still asserted (level-triggered),
-    /// re-pend and re-evaluate outputs.
+    /// Complete (acknowledge) a previously claimed IRQ.
+    /// Clears the claim record and re-evaluates outputs.
+    /// Does NOT automatically re-pend based on source wire
+    /// level — the device must de-assert and re-assert to
+    /// generate a new interrupt (matching QEMU semantics).
     pub fn complete_irq(&self, context: u32, irq: u32) {
         if context >= self.num_contexts {
             return;
@@ -298,15 +302,7 @@ impl Plic {
                 ctx_guard.claim[ctx] = 0;
             }
         }
-        // Level-triggered resample: if the source wire is
-        // still high, re-assert pending.
-        if irq > 0
-            && (irq as usize) < self.source_level.len()
-            && self.source_level[irq as usize].load(Ordering::Relaxed) != 0
-        {
-            self.set_pending(irq, true);
-            self.update_outputs();
-        }
+        self.update_outputs();
     }
 
     // ---- MMIO interface ----

@@ -48,6 +48,19 @@ const LSR_TEMT: u8 = 1 << 6; // transmitter empty
 // LCR bits
 const LCR_DLAB: u8 = 1 << 7;
 
+// MCR bits
+const MCR_DTR: u8 = 1 << 0;
+const MCR_RTS: u8 = 1 << 1;
+const MCR_OUT1: u8 = 1 << 2;
+const MCR_OUT2: u8 = 1 << 3;
+const MCR_LOOPBACK: u8 = 1 << 4;
+
+// MSR bits
+const MSR_CTS: u8 = 1 << 4;
+const MSR_DSR: u8 = 1 << 5;
+const MSR_RI: u8 = 1 << 6;
+const MSR_DCD: u8 = 1 << 7;
+
 const FIFO_SIZE: usize = 16;
 
 #[derive(Debug)]
@@ -125,7 +138,7 @@ impl Uart16550Regs {
         }
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self, has_chardev: bool) {
         self.rbr = 0;
         self.thr = 0;
         self.ier = 0;
@@ -134,12 +147,38 @@ impl Uart16550Regs {
         self.lcr = 0;
         self.mcr = 0;
         self.lsr = LSR_THRE | LSR_TEMT;
-        self.msr = 0;
         self.scr = 0;
         self.dll = 0;
         self.dlm = 0;
         self.rx_fifo.clear();
         self.irq_pending = false;
+        self.update_msr(has_chardev);
+    }
+
+    /// Recompute MSR based on MCR loopback state and
+    /// chardev presence.
+    fn update_msr(&mut self, has_chardev: bool) {
+        if self.mcr & MCR_LOOPBACK != 0 {
+            // 16550 loopback: MCR outputs routed to MSR.
+            let mut msr = 0u8;
+            if self.mcr & MCR_DTR != 0 {
+                msr |= MSR_DSR;
+            }
+            if self.mcr & MCR_RTS != 0 {
+                msr |= MSR_CTS;
+            }
+            if self.mcr & MCR_OUT1 != 0 {
+                msr |= MSR_RI;
+            }
+            if self.mcr & MCR_OUT2 != 0 {
+                msr |= MSR_DCD;
+            }
+            self.msr = msr;
+        } else if has_chardev {
+            self.msr = MSR_CTS | MSR_DSR | MSR_DCD;
+        } else {
+            self.msr = 0;
+        }
     }
 }
 
@@ -255,6 +294,9 @@ impl Uart16550 {
             fe.start_input(rx_cb);
             *self.chardev.borrow() = Some(fe);
             *self.resolved_chardev_path.lock() = path;
+            // Set modem status lines when chardev present.
+            self.regs.borrow().msr =
+                MSR_CTS | MSR_DSR | MSR_DCD;
         }
 
         Ok(())
@@ -323,7 +365,8 @@ impl Uart16550 {
     }
 
     pub fn reset_runtime(&self) {
-        self.regs.borrow().reset();
+        let has_cd = self.chardev.borrow().is_some();
+        self.regs.borrow().reset(has_cd);
         let line = self.irq_line.lock();
         if let Some(ref l) = *line {
             l.lower();
@@ -431,7 +474,12 @@ impl Uart16550 {
                 }
             }
             3 => self.regs.borrow().lcr = val,
-            4 => self.regs.borrow().mcr = val,
+            4 => {
+                let has_cd = self.chardev.borrow().is_some();
+                let mut regs = self.regs.borrow();
+                regs.mcr = val;
+                regs.update_msr(has_cd);
+            }
             5 => {} // LSR is read-only
             6 => {} // MSR is read-only
             7 => self.regs.borrow().scr = val,
@@ -452,15 +500,23 @@ impl Uart16550 {
     }
 
     fn write_thr(&self, val: u8) {
-        {
+        let loopback = {
             let mut regs = self.regs.borrow();
             regs.thr = val;
             // In emulation the byte is "transmitted"
             // instantly, so THRE stays set.
             regs.lsr |= LSR_THRE | LSR_TEMT;
-        }
-        // Forward to chardev frontend if attached.
-        if let Some(ref mut fe) = *self.chardev.borrow() {
+            regs.mcr & MCR_LOOPBACK != 0
+        };
+        if loopback {
+            // Loopback: route THR → RX FIFO.
+            let mut regs = self.regs.borrow();
+            if regs.rx_fifo.len() < FIFO_SIZE {
+                regs.rx_fifo.push_back(val);
+            }
+            regs.lsr |= LSR_DR;
+        } else if let Some(ref mut fe) = *self.chardev.borrow()
+        {
             fe.write(&[val]);
         }
         self.update_irq();

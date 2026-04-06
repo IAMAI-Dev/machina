@@ -133,15 +133,25 @@ fn test_plic_set_irq_propagates() {
     // No interrupt yet.
     assert!(!sink.level(out_irq), "output should be low before set_irq");
 
-    // Assert source 1.
+    // Assert source 1 (rising edge → pending).
     plic.set_irq(1, true);
     assert!(sink.level(out_irq), "output should go high after set_irq");
 
-    // Deassert source 1.
+    // Deassert source 1. With edge-triggered semantics,
+    // pending stays set until claimed. Output remains high.
     plic.set_irq(1, false);
     assert!(
+        sink.level(out_irq),
+        "output stays high until claimed (edge-triggered)"
+    );
+
+    // Claim and complete to clear.
+    let claimed = plic.read(0x200004, 4);
+    assert_eq!(claimed, 1);
+    plic.write(0x200004, 4, 1); // complete
+    assert!(
         !sink.level(out_irq),
-        "output should go low after clearing IRQ"
+        "output should go low after claim+complete"
     );
 }
 
@@ -170,60 +180,47 @@ fn test_plic_claim_on_read() {
     assert_eq!(claimed2, 0, "second claim should return 0");
 }
 
+/// Edge-triggered PLIC: complete does NOT re-pend even if
+/// the source wire is still high. A new interrupt requires
+/// the device to de-assert and re-assert (0→1 edge).
 #[test]
-fn test_plic_level_triggered_resample() {
+fn test_plic_edge_triggered_no_resample() {
     let plic = Plic::new(64, 1);
 
-    // Connect output for context 0.
     let sink = Arc::new(TestIrqSink::new(16));
-    let out_irq = 11u32; // MEI
+    let out_irq = 11u32;
     let isrc =
         InterruptSource::new(Arc::clone(&sink) as Arc<dyn IrqSink>, out_irq);
     plic.connect_context_output(0, isrc);
 
-    // priority[1] = 1, enable IRQ 1 for ctx 0.
-    plic.write(0x04, 4, 1);
-    plic.write(0x2000, 4, 0x02);
+    plic.write(0x04, 4, 1); // priority[1] = 1
+    plic.write(0x2000, 4, 0x02); // enable IRQ 1
 
-    // Assert source 1 (level-triggered).
+    // Assert source 1 → pending.
     plic.set_irq(1, true);
-    assert!(sink.level(out_irq), "output should be high");
+    assert!(sink.level(out_irq));
 
-    // Claim via MMIO.
+    // Claim.
     let claimed = plic.read(0x200004, 4);
     assert_eq!(claimed, 1);
 
-    // Complete without lowering source -- should re-pend.
+    // Complete while source still high — should NOT re-pend.
     plic.write(0x200004, 4, 1);
-
     let pending = plic.read(0x1000, 4);
-    assert_ne!(
+    assert_eq!(
         pending & (1 << 1),
         0,
-        "pending should be re-set after complete \
-         while source high"
-    );
-    assert!(
-        sink.level(out_irq),
-        "output should remain high after resample"
+        "pending must NOT re-set on complete (edge-triggered)"
     );
 
-    // Now lower the source, claim and complete again.
+    // De-assert then re-assert → new pending.
     plic.set_irq(1, false);
-
     plic.set_irq(1, true);
-    let claimed2 = plic.read(0x200004, 4);
-    assert_eq!(claimed2, 1);
-
-    // Lower source before completing.
-    plic.set_irq(1, false);
-    plic.write(0x200004, 4, 1);
-
     let pending2 = plic.read(0x1000, 4);
-    assert_eq!(
+    assert_ne!(
         pending2 & (1 << 1),
         0,
-        "pending should stay cleared when source is low"
+        "pending should be set after 0→1 edge"
     );
 }
 
