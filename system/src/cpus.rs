@@ -435,10 +435,27 @@ impl GuestCpu for FullSystemCpu {
         // (AC-10). Limit avail to remaining bytes in
         // the current 4K page.
         let page_remain = 4096 - (phys_pc & 0xFFF);
-        let avail_bytes = page_remain.min(region_size - phys_offset);
+        let mut avail_bytes =
+            page_remain.min(region_size - phys_offset);
+        // GDB breakpoint: stop TB before the breakpoint
+        // so the exec loop's entry check can fire.
+        // Use 4-byte (full-width) instruction count to
+        // prevent the TB from spanning the breakpoint.
+        let bp_limit = if let Some(bp) = self.gdb_next_breakpoint(
+            pc, avail_bytes,
+        ) {
+            let bp_off = bp - pc;
+            if bp_off < avail_bytes {
+                avail_bytes = bp_off;
+            }
+            // Conservative: assume full-width instructions.
+            (bp_off / 4).max(1) as u32
+        } else {
+            u32::MAX
+        };
         // Allow 2-byte (compressed) instructions.
         let avail = avail_bytes / 2;
-        let limit = max_insns.min(avail as u32);
+        let limit = max_insns.min(avail as u32).min(bp_limit);
         if limit == 0 {
             return 0;
         }
@@ -814,7 +831,14 @@ impl GuestCpu for FullSystemCpu {
     fn take_tb_flush_pending(&mut self) -> bool {
         let pending = self.cpu.tb_flush_pending;
         self.cpu.tb_flush_pending = false;
-        pending
+        // Also flush when GDB breakpoints changed so TBs
+        // that span breakpoint addresses get retranslated.
+        let gdb_flush = if let Some(ref gs) = self.gdb_state {
+            gs.take_tb_flush()
+        } else {
+            false
+        };
+        pending || gdb_flush
     }
 
     fn last_phys_pc(&self) -> u64 {
@@ -892,6 +916,20 @@ impl GuestCpu for FullSystemCpu {
             }
         }
         false
+    }
+
+    fn gdb_next_breakpoint(
+        &self,
+        pc: u64,
+        max_bytes: u64,
+    ) -> Option<u64> {
+        if let Some(ref gs) = self.gdb_state {
+            if gs.is_connected() && gs.has_breakpoints() {
+                return gs
+                    .next_breakpoint_in_range(pc, pc + max_bytes);
+            }
+        }
+        None
     }
 
     fn handle_priv_csr(&mut self) -> bool {

@@ -87,6 +87,17 @@ where
         }
         per_cpu.stats.loop_iters += 1;
 
+        // Flush TBs if requested (breakpoint change, satp
+        // write, etc.). Must happen before TB lookup so
+        // stale TBs that span breakpoint addresses are gone.
+        if cpu.take_tb_flush_pending() {
+            shared
+                .tb_store
+                .invalidate_all(shared.code_buf(), &shared.backend);
+            per_cpu.jump_cache.invalidate();
+            next_tb_hint = None;
+        }
+
         let stepping = cpu.gdb_single_step();
 
         // Suppress interrupts during GDB single-step
