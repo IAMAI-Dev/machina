@@ -208,7 +208,7 @@ pub fn boot_ref_machine(
             let data = std::fs::read(path)?;
             let as_ = machine.address_space();
             if is_elf(&data) {
-                let info = loader::load_elf(&data, as_)
+                let info = loader::load_elf(&data, RAM_BASE, as_)
                     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
                 fw_entry = Some(info.entry.0);
             } else {
@@ -225,9 +225,10 @@ pub fn boot_ref_machine(
                 let data = std::fs::read(&path)?;
                 let as_ = machine.address_space();
                 if is_elf(&data) {
-                    let info = loader::load_elf(&data, as_).map_err(
-                        |e| -> Box<dyn std::error::Error> { e.into() },
-                    )?;
+                    let info = loader::load_elf(&data, RAM_BASE, as_)
+                        .map_err(|e| -> Box<dyn std::error::Error> {
+                            e.into()
+                        })?;
                     fw_entry = Some(info.entry.0);
                 } else {
                     loader::load_binary(&data, GPA::new(RAM_BASE), as_)
@@ -257,12 +258,13 @@ pub fn boot_ref_machine(
             RAM_BASE
         };
         if is_elf(&data) {
-            let info = loader::load_elf(&data, as_)
+            let info = loader::load_elf(&data, load_addr, as_)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
             kernel_entry = Some(info.entry.0);
         } else {
             loader::load_binary(&data, GPA::new(load_addr), as_)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            kernel_entry = Some(load_addr);
         }
     }
 
@@ -306,25 +308,13 @@ pub fn boot_ref_machine(
         RAM_BASE
     } else if let Some(entry) = kernel_entry {
         entry
-    } else if machine.kernel_path.is_some() {
-        if has_firmware {
-            RAM_BASE + KERNEL_OFFSET
-        } else {
-            RAM_BASE
-        }
     } else {
         RAM_BASE
     };
 
-    // Compute kernel_entry for fw_dynamic_info.next_addr.
-    let dinfo_next = if has_firmware {
-        kernel_entry.unwrap_or(RAM_BASE + KERNEL_OFFSET)
-    } else {
-        start_addr
-    };
-
     // Write MROM: reset vector + fw_dynamic_info.
-    write_mrom(machine, start_addr, fdt_addr, dinfo_next, has_firmware);
+    let dinfo_final = kernel_entry.unwrap_or(RAM_BASE + KERNEL_OFFSET);
+    write_mrom(machine, start_addr, fdt_addr, dinfo_final, has_firmware);
 
     // CPU0 starts at MROM base in M-mode.
     {
