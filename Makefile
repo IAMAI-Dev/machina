@@ -21,7 +21,8 @@ test-frontend:
 	cargo test -p machina-tests frontend
 
 test-integration:
-	cargo test -p machina-tests integration exec
+	cargo test -p machina-tests integration
+	cargo test -p machina-tests exec
 
 clippy:
 	cargo clippy --workspace -- -D warnings -A clippy::pedantic -A clippy::nursery
