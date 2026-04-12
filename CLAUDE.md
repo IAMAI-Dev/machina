@@ -1,248 +1,111 @@
 # CLAUDE.md
 
-本文件为 Claude Code (claude.ai/code) 在本仓库中工作时提供指导。
+This file is the authoritative source of rules for all AI agents and human
+contributors working in this repository. Tool-specific files (e.g. AGENTS.md)
+point here and add only tool-specific context on top.
 
-## 项目概述
+Detailed coding guidelines live under `docs/en/` (English) and `docs/zh/`
+(Chinese). When in doubt, this file takes precedence.
 
-Machina 是一个用 Rust 编写的模块化 RISC-V 模拟器，基于 JIT 动态二进制翻译引擎。JIT 核心源自对 QEMU TCG（Tiny Code Generator）的重新实现，参考实现位于 `~/qemu/tcg/`、`~/qemu/accel/tcg/`、`~/qemu/include/tcg/` 和 `~/qemu/hw/`。
+## Project Overview
 
-**当前状态快照（2026-04-02）**：
+Machina is a modular RISC-V full-system emulator written in Rust, featuring a
+JIT dynamic binary translation engine. It reimplements core QEMU concepts
+(TCG, device models, full-system emulation) to boot rCore-Tutorial ch1-ch8.
 
-- **JIT 引擎**：完整翻译流水线可用——RISC-V 解码、IR 生成、优化、
-  寄存器分配、x86-64 代码生成。多线程 vCPU 并发执行、直接 TB 链路、
-  MMIO helper 分发均已就绪。
-- **Full-system 模式**：RISC-V 参考机器（riscv64-ref）可引导，
-  集成 PLIC、ACLINT、UART、Sv39 MMU、SBI 固件接口。
-- **VirtIO 块设备**：VirtIO MMIO v2 transport + raw file mmap 后端，
-  支持 rCore ch6-ch8 文件系统启动。
-- **Monitor 控制台**：MMP（QMP 兼容 JSON over TCP）+ HMP 文本命令 +
-  Ctrl+A C 切换 + vCPU 暂停/恢复。
-- **Difftest**：通过 GDB RSP 协议与 QEMU 逐指令对比。
-- **RISC-V 前端**：188 条指令（RV64GC + 特权指令），含 Sv39 MMU、
-  TLB、PMP、M/S/U 特权级。
-- **测试**：1039 个测试覆盖全流水线。
-- **rCore 支持**：ch1-ch8 全部通过。
-
-## 构建与开发命令
+## Quick Start
 
 ```bash
-cargo build                          # 构建所有 crate
-cargo build --release                # Release 构建
-cargo test --workspace               # 运行所有测试
-cargo test -p machina-core           # 测试单个 crate
-cargo test -- test_name              # 运行指定测试
-cargo clippy -- -D warnings          # Lint 检查
-cargo fmt --check                    # 格式检查
-cargo fmt                            # 自动格式化
-cargo doc --open                     # 生成并打开文档
+make build          # build all crates (debug)
+make release        # build all crates (release)
+make test           # run all tests
+make clippy         # lint with -D warnings
+make fmt            # auto-format
+make fmt-check      # check formatting
+make docs           # generate rustdocs
+make clean          # clean build artifacts
 ```
 
-## Git Commit 规范
+See the `Makefile` for the full list of targets.
 
-Commit message 必须使用英文编写。格式如下：
+## Boundary Constraints
 
-```
-module: subject
+### Unsafe Rust
 
-具体修改内容的详细说明。
+`unsafe` is only permitted in these scenarios:
 
-Signed-off-by: Name <email>
-```
+- JIT code buffer allocation and execution (mmap + mprotect RWX)
+- Calling generated host code (function pointer cast from code buffer)
+- Raw pointer access for guest memory emulation (TLB fast path)
+- Inline assembly in the backend code emitter
+- FFI interfaces to external libraries
 
-**Subject 行规则**：
+Everything else must be safe Rust. Every `unsafe` block requires a short
+justification comment and must remain narrowly scoped.
 
-- 格式为 `module: subject`，其中 `module` 是受影响的主要模块名
-- 常用 module 名：`core`、`accel`、`guest/riscv`、`decode`、`system`、`memory`、`hw/core`、`hw/intc`、`hw/char`、`hw/riscv`、`tests`、`docs`、`project`（跨模块变更）
-- subject 使用小写开头，祈使语气（如 `add`、`fix`、`remove`），不加句号
-- 总长度不超过 72 字符
+### Test Centralization
 
-**Body 规则**：
+All tests **must** live in the `tests/` crate (`machina-tests`). Do not add
+tests in individual crate `#[cfg(test)] mod tests` blocks or per-crate
+`tests/` directories. Individual crates expose `pub` interfaces for the test
+crate to call.
 
-- 与 subject 之间空一行
-- 说明本次变更的内容和原因（what & why），而非如何实现（how）
-- 每行不超过 80 字符
+### Code Style
 
-**示例**：
+- 80-column line width for all code and code comments
+- 4-space indentation, no tabs
+- `cargo fmt` before committing
+- `cargo clippy -- -D warnings` must pass with zero warnings
+- English comments only, and only at key logic points
 
-```
-core: add vector opcode support
+Full style guide: `docs/en/coding-style.md` / `docs/zh/coding-style.md`
 
-Add V64/V128/V256 vector opcodes to the unified opcode enum.
-Each vector op carries OpFlags::VECTOR for backend dispatch.
+## Commit Rules
 
-Signed-off-by: Chao Liu <chao.liu.zevorn@gmail.com>
-```
+- English commit messages
+- Format: `module: subject` (imperative mood, <= 72 characters)
+- Body: describe what changed and why, <= 80 characters per line
+- Add `Signed-off-by: Name <email>` for commits in this repository
+- No AI-related sign-off lines (e.g. `Co-Authored-By: Claude`)
 
-## 架构
+Full git guidelines: `docs/en/git-guidelines.md` / `docs/zh/git-guidelines.md`
 
-### 翻译流水线
+## Testing Rules
 
-```
-+-----------+   +----------+   +----------+   +-----------+   +----------+
-|   Guest   |-->| Frontend |-->| IR Build |-->| Optimizer |-->| Backend  |
-|   Binary  |   | (decode, |   | (gen_*)  |   |           |   | (x86-64) |
-|   (RV64)  |   |  trans_*)|   +----------+   +-----------+   +-----+----+
-+-----------+   +----------+                                        |
-                                                                    v
-                        +----------------------------------------------+
-                        |               Execution Engine               |
-                        |  TB Cache + Multi-vCPU + Chaining + MMIO     |
-                        +----------------------+-----------------------+
-                                               |
-                                               v
-                        +----------------------------------------------+
-                        |            Full-System Emulation             |
-                        |  riscv64-ref: PLIC + ACLINT + UART + FDT     |
-                        |  Sv39 MMU + SBI Firmware Interface           |
-                        +----------------------------------------------+
-```
+- Every bug fix must add or update a regression test
+- Every new feature must include tests for expected path, edge cases, and
+  failure cases
+- A change is not done if tests fail, are silently skipped, or do not check
+  the claimed behavior
+- Run the narrowest useful tests while iterating, then full validation before
+  finishing
 
-### Workspace 结构
+Full testing guide: `docs/en/testing.md` / `docs/zh/testing.md`
 
-| Crate | 路径 | 职责 | QEMU 参考 |
-|-------|------|------|----------|
-| `machina` | `src/` | CLI 入口 | `softmmu/main.c` |
-| `machina-core` | `core/` | IR 定义、CPU trait、地址类型 | `include/tcg/tcg.h`、`tcg/tcg-opc.h` |
-| `machina-accel` | `accel/` | IR 优化、寄存器分配、x86-64 codegen、执行引擎 | `tcg/tcg.c`、`tcg/optimize.c`、`tcg/i386/`、`accel/tcg/cpu-exec.c` |
-| `machina-guest-riscv` | `guest/riscv/` | RISC-V 前端：RV64GC + 特权 ISA、Sv39 MMU | `target/riscv/translate.c` |
-| `machina-decode` | `decode/` | `.decode` 解析器与 Rust 解码器生成器 | `scripts/decodetree.py` |
-| `machina-system` | `system/` | 全系统 CPU 桥接、CpuManager、WFI | `softmmu/cpus.c` |
-| `machina-memory` | `memory/` | AddressSpace、MMIO 分发、RAM 块 | `softmmu/memory.c` |
-| `machina-hw-core` | `hw/core/` | 设备基础设施：qdev、IRQ、chardev、FDT | `hw/core/` |
-| `machina-hw-intc` | `hw/intc/` | PLIC、ACLINT（MTIMER + MSWI） | `hw/intc/` |
-| `machina-hw-char` | `hw/char/` | UART 16550A | `hw/char/` |
-| `machina-hw-riscv` | `hw/riscv/` | RISC-V 参考机器、boot、SBI | `hw/riscv/` |
-| `machina-disas` | `disas/` | RISC-V 反汇编器 | `disas/` |
-| `machina-hw-virtio` | `hw/virtio/` | VirtIO MMIO + block device | `hw/virtio/` |
-| `machina-monitor` | `monitor/` | MMP/HMP monitor 控制台 | `monitor/` |
-| `machina-difftest` | `tools/difftest/` | GDB RSP difftest 客户端 | — |
-| `machina-util` | `util/` | 共享工具 | `util/` |
-| `machina-tests` | `tests/` | 1039 个测试 | `tests/tcg/` |
-| `machina-mtest` | `tests/mtest/` | 机器级测试 | — |
+## Documentation
 
-### 核心数据结构（C → Rust 映射）
+When behavior, interfaces, or assumptions change, update the corresponding
+docs under `docs/`. Existing documentation:
 
-| QEMU C 结构 | Rust 等价物 | 用途 |
-|-------------|------------|------|
-| `TCGOpcode`（DEF 宏枚举） | `enum Opcode` | 158 个统一多态 IR opcodes |
-| `TCGType` | `enum Type { I32, I64, I128, V64, V128, V256 }` | IR 值类型 |
-| `TCGTemp` | `struct Temp` | IR 变量（global、local、const、fixed-reg） |
-| `TCGTempKind` | `enum TempKind { Ebb, Tb, Global, Fixed, Const }` | 变量生命周期/作用域 |
-| `TCGOp` | `struct Op` | 单个 IR 操作（opcode + args） |
-| `TCGContext` | `struct Context` | 每线程翻译状态 |
-| `TCGLabel` | `struct Label` | TB 内的分支目标 |
-| `TranslationBlock` | `struct TranslationBlock` | 缓存的翻译代码块 |
-| `CPUJumpCache` | `struct JumpCache` | 每 CPU 直接映射 TB 缓存，4096 项 |
-| `MemoryRegion` | `struct MemoryRegion` | 层级内存区域 |
-| `AddressSpace` | `struct AddressSpace` | 地址空间与 MMIO 分发 |
+| File | Content |
+|------|---------|
+| `coding-style.md` | Line width, formatting, naming conventions |
+| `coding-guidelines.md` | General coding guidelines |
+| `rust-guidelines.md` | Rust-specific guidelines |
+| `git-guidelines.md` | Git commit and PR conventions |
+| `testing.md` | Test organization and policies |
+| `design.md` | Architecture and design docs |
+| `ir-ops.md` | IR opcode reference |
+| `x86_64-backend.md` | x86-64 code generation docs |
+| `linux-boot.md` | Linux boot guide |
+| `mom.md` | Memory management docs |
+| `performance.md` | Performance analysis |
 
-### 翻译块生命周期
+## Quality Gates
 
-1. **查找**：PC 哈希 → jump cache（每 CPU，4096 项）→ 全局哈希表（32K 桶）
-2. **未命中 → 翻译**：前端解码客户指令 → 发射 TCG IR → 优化器运行 → 后端生成宿主代码
-3. **缓存**：插入哈希表和 jump cache
-4. **执行**：跳转到生成的宿主代码
-5. **链接**：修补 TB 间的直接跳转（`goto_tb`/`exit_tb`）
-6. **失效**：自修改代码、页面取消映射或缓存满时——解链并移除
+Before submitting any change:
 
-热路径优化：
-
-- `next_tb_hint`：执行循环在同一条链路上复用上一次目标 TB，减少重复查找。
-- `exit_target`：对 `TB_EXIT_NOCHAIN` 场景缓存最近目标 TB（原子读写）。
-
-### 前端 Trait 设计
-
-```rust
-trait TranslatorOps {
-    fn init(&mut self, ctx: &mut Context);
-    fn translate_insn(&mut self, ctx: &mut Context) -> TranslateResult;
-    fn tb_stop(&mut self, ctx: &mut Context);
-}
-```
-
-### 后端 Trait 设计
-
-```rust
-trait HostCodeGen {
-    fn emit_prologue(&mut self, buf: &mut CodeBuffer);
-    fn emit_epilogue(&mut self, buf: &mut CodeBuffer);
-    fn patch_jump(&mut self, buf: &mut CodeBuffer, jump_offset: usize, target_offset: usize);
-    fn epilogue_offset(&self) -> usize;
-    fn init_context(&self, ctx: &mut Context);
-}
-```
-
-### Unsafe 边界
-
-`unsafe` 仅在以下场景允许使用：
-
-- JIT 代码缓冲区分配和执行（mmap + mprotect RWX 转换）
-- 调用生成的宿主代码（从代码缓冲区进行 `fn()` 指针转换）
-- 客户内存模拟的原始指针访问（TLB 快速路径）
-- 后端代码发射器中的内联汇编
-- 与外部库的 FFI 接口
-
-所有其他代码必须是安全的 Rust。
-
-## QEMU 参考路径
-
-理解原始实现的关键源文件：
-
-- **TCG 核心**：`~/qemu/tcg/tcg.c`、`~/qemu/tcg/tcg-op.c`
-- **优化器**：`~/qemu/tcg/optimize.c`
-- **执行循环**：`~/qemu/accel/tcg/cpu-exec.c`
-- **TB 管理**：`~/qemu/accel/tcg/translate-all.c`、`~/qemu/accel/tcg/tb-maint.c`
-- **软件 TLB**：`~/qemu/accel/tcg/cputlb.c`
-- **硬件模型**：`~/qemu/hw/riscv/`、`~/qemu/hw/intc/`、`~/qemu/hw/char/`
-- **后端**：`~/qemu/tcg/i386/`、`~/qemu/tcg/aarch64/`
-- **前端**：`~/qemu/target/riscv/translate.c`
-- **Decodetree**：`~/qemu/docs/devel/decodetree.rst`
-
-## 调试手段
-
-- `cargo test -p machina-tests exec::mttcg -- --nocapture`：
-  优先复现并发相关问题。
-- `RUST_BACKTRACE=1 cargo test -- --nocapture`：
-  复现并定位 guest 执行崩溃。
-
-## 代码风格
-
-代码行宽不超过 **80 列**（`.md` 文档文件不受此限制）。详细规范见 [`docs/zh/coding-style.md`](docs/zh/coding-style.md)。
-
-核心规则：
-
-- 缩进使用 4 个空格，禁止 Tab
-- 代码行宽上限 80 列，代码注释同样遵守；`.md` 文档文件不限列宽
-- 运行 `cargo fmt` 格式化，`cargo clippy -- -D warnings` 零警告
-- 注释使用英文，仅在关键逻辑处添加
-- 常量命名：QEMU 风格的操作码常量允许 `non_upper_case_globals`
-- `unsafe` 仅限 JIT 执行和客户内存访问
-- **测试集中管理**：所有测试**必须**写在 `tests/` crate（`machina-tests`）中，**禁止**在各 crate 内部的 `tests/` 目录或 `#[cfg(test)] mod tests` 中编写测试。各 crate 仅提供 `pub` 接口供 tests crate 调用。
-
-## ASCII 图表规范
-
-文档中的所有架构图、流程图、框图必须遵循以下规则：
-
-- **仅使用 ASCII 字符**：框线使用 `+`、`-`、`|`，箭头使用 `-->`、`|`、`v`。禁止 Unicode 框线字符（`┌─┐│└┘├┤`）和 Unicode 箭头（`→←↑↓▼▲`）
-- **框线必须严格对齐**：同一个 box 的 `+` 角点、`-` 横线、`|` 竖线必须在相同列/行上。内容行的左 `|` 和右 `|` 必须与顶部/底部的 `+` 在完全相同的列
-- **框内内容定宽**：每个 box 内所有内容行长度必须一致（等于顶部 `-` 的数量），不足用空格填充到右 `|` 之前
-- **流程图内部使用英文**：框内标签、流向描述统一使用英文
-- **编写后验证**：新建或修改图表后，用 `awk` 或脚本检查所有 `|` 和 `+` 的列号是否一致
-
-示例（正确对齐）：
-
-```
-+----------+   +-----------+   +----------+
-|  Input   |-->| Transform |-->|  Output  |
-| (source) |   |           |   | (target) |
-+----------+   +-----------+   +----------+
-```
-
-## 设计原则
-
-- **不向后兼容**：自由破坏、积极清理，不做迁移垫片。
-- **基于 Trait 的可扩展性**：前端和后端是 trait 实现，而非条件编译。
-- **枚举驱动的 Opcodes**：用带 `#[repr(u8)]` 的 Rust 枚举替代 C 的 `DEF()` 宏模式。
-- **类型安全的 IR 构建器**：利用 Rust 类型系统在编译期防止混用 I32/I64 操作数。
-- **QEMU 兼容设备模型**：qdev 层级、IRQ sink、FDT 生成、chardev 抽象。
-- **最小化 `unsafe`**：限制在 JIT 执行和客户内存访问中；其他一切使用安全 Rust。
+1. `make fmt-check` passes
+2. `make clippy` passes
+3. `make test` passes
+4. Relevant documentation is updated
