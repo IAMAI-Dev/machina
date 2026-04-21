@@ -407,9 +407,17 @@ impl VirtioNet {
                 pkt.extend_from_slice(slice);
             }
 
-            // Skip the virtio-net header.
+            // Skip the virtio-net header and send.
             if pkt.len() > hdr_size {
-                let _ = self.backend.write_packet(&pkt[hdr_size..]);
+                match self.backend.write_packet(&pkt[hdr_size..]) {
+                    Ok(n) if n > 0 => {}
+                    _ => {
+                        // Backpressure or error: don't
+                        // complete the buffer so the
+                        // guest can retry.
+                        break;
+                    }
+                }
             }
 
             let written = 0u32;

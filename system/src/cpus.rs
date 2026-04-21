@@ -611,7 +611,12 @@ impl GuestCpu for FullSystemCpu {
     // -- Full-system hooks --
 
     fn pending_interrupt(&self) -> bool {
-        let dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        let mut dev_mip = self.shared_mip.load(Ordering::Relaxed);
+        // In builtin mode, treat MTIP (bit 7) as STIP
+        // (bit 5) so the mie gate opens for S-mode guests.
+        if self.builtin_mode && dev_mip & (1 << 7) != 0 {
+            dev_mip = (dev_mip & !(1u64 << 7)) | (1u64 << 5);
+        }
         let pending = (self.cpu.csr.mip | dev_mip) & self.cpu.csr.mie;
         if pending == 0 {
             return false;
