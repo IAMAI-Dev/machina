@@ -266,15 +266,17 @@ fn parse_netdev_opts(
                 mac = Some(v.to_string());
             }
         }
-        // Validate that device references the same netdev.
-        if let Some(ref dn) = dev_netdev {
-            if dn != &id {
-                return Err(format!(
-                    "-device: netdev={} does not match \
-                     -netdev id={}",
-                    dn, id
-                ));
-            }
+        let dev_netdev = dev_netdev.ok_or(
+            "-device virtio-net-device: \
+             missing netdev= parameter"
+                .to_string(),
+        )?;
+        if dev_netdev != id {
+            return Err(format!(
+                "-device: netdev={} does not match \
+                 -netdev id={}",
+                dev_netdev, id
+            ));
         }
     }
 
@@ -542,6 +544,16 @@ fn main() {
     }
     if cli.machine != "riscv64-ref" {
         eprintln!("machina: unknown machine: {}", cli.machine);
+        machina_hw_core::chardev::restore_terminal();
+        process::exit(1);
+    }
+
+    // Reject -device virtio-net-device without -netdev.
+    if cli.device_net_raw.is_some() && cli.netdev_raw.is_none() {
+        eprintln!(
+            "machina: -device virtio-net-device \
+             requires a matching -netdev"
+        );
         machina_hw_core::chardev::restore_terminal();
         process::exit(1);
     }

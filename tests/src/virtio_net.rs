@@ -1,8 +1,18 @@
+use std::sync::Arc;
+
 use machina_hw_virtio::net::{
-    parse_mac, PipeBackend, VirtioNet, DEFAULT_MAC, VIRTIO_NET_HDR_SIZE_BASE,
-    VIRTIO_NET_HDR_SIZE_MRG,
+    parse_mac, PipeBackend, TapBackend, VirtioNet, DEFAULT_MAC,
+    VIRTIO_NET_HDR_SIZE_BASE, VIRTIO_NET_HDR_SIZE_MRG,
 };
 use machina_hw_virtio::VirtioDevice;
+
+// ── TapBackend error ─────────────────────────────────
+
+#[test]
+fn test_tap_backend_invalid_ifname() {
+    let result = TapBackend::new("nonexistent_xyz99");
+    assert!(result.is_err());
+}
 
 // ── parse_mac ─────────────────────────────────────────
 
@@ -42,7 +52,7 @@ fn test_parse_mac_bad_hex() {
 
 fn make_net() -> VirtioNet {
     let pipe = PipeBackend::new().expect("pipe backend");
-    VirtioNet::new_default(Box::new(pipe))
+    VirtioNet::new_default(Arc::new(pipe))
 }
 
 #[test]

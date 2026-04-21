@@ -1008,6 +1008,13 @@ impl GuestCpu for FullSystemCpu {
             return false;
         }
 
+        if do_write {
+            machina_util::trace::trace_csr(
+                &format!("0x{:03x}", csr_addr),
+                new_val,
+            );
+        }
+
         // Sync runtime state after privileged CSR writes.
         if do_write {
             use machina_guest_riscv::riscv::csr::{

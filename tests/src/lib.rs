@@ -65,6 +65,8 @@ mod system_cpu_manager;
 #[cfg(test)]
 mod tools;
 #[cfg(test)]
+mod trace;
+#[cfg(test)]
 mod virtio;
 #[cfg(test)]
 mod virtio_net;

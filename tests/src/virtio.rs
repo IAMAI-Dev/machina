@@ -7,6 +7,8 @@ use machina_hw_core::bus::SysBus;
 use machina_hw_core::irq::{IrqLine, IrqSink};
 use machina_hw_virtio::block::VirtioBlk;
 use machina_hw_virtio::mmio::VirtioMmio;
+use machina_hw_virtio::net::PipeBackend;
+use machina_hw_virtio::net::VirtioNet;
 use machina_hw_virtio::queue::VirtQueue;
 use machina_memory::address_space::AddressSpace;
 use machina_memory::region::MemoryRegion;
@@ -138,4 +140,67 @@ fn test_virtio_realize_via_sysbus_maps_mmio() {
     assert_eq!(address_space.read(GPA::new(0x1000_1000), 4), 0x74726976);
     assert_eq!(bus.mappings().len(), 1);
     assert_eq!(bus.mappings()[0].owner, "virtio-mmio");
+}
+
+// ── Multi-queue transport tests (AC-1) ───────────────
+
+fn make_net_device() -> (VirtioMmio, Arc<DummySink>) {
+    let pipe = PipeBackend::new().unwrap();
+    let net = VirtioNet::new_default(Arc::new(pipe));
+    let sink = Arc::new(DummySink {
+        level: AtomicBool::new(false),
+    });
+    let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
+    let mmio = VirtioMmio::new(
+        Box::new(net),
+        irq,
+        std::ptr::null_mut(),
+        0x8000_0000,
+        128 * 1024 * 1024,
+    );
+    (mmio, sink)
+}
+
+#[test]
+fn test_multiqueue_num_max_queue0() {
+    let (dev, _) = make_net_device();
+    dev.write(0x030, 4, 0); // QUEUE_SEL = 0
+    assert_ne!(dev.read(0x034, 4), 0); // QUEUE_NUM_MAX
+}
+
+#[test]
+fn test_multiqueue_num_max_queue1() {
+    let (dev, _) = make_net_device();
+    dev.write(0x030, 4, 1); // QUEUE_SEL = 1
+    assert_ne!(dev.read(0x034, 4), 0); // QUEUE_NUM_MAX
+}
+
+#[test]
+fn test_multiqueue_invalid_queue_sel() {
+    let (dev, _) = make_net_device();
+    dev.write(0x030, 4, 99); // invalid queue
+    assert_eq!(dev.read(0x034, 4), 0); // 0 for invalid
+}
+
+#[test]
+fn test_multiqueue_notify_without_driver_ok() {
+    let (dev, sink) = make_net_device();
+    dev.write(0x070, 4, 1); // ACKNOWLEDGE only, no OK
+    dev.write(0x050, 4, 1); // QUEUE_NOTIFY queue 1
+    assert!(!sink.level.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_multiqueue_net_device_id() {
+    let (dev, _) = make_net_device();
+    assert_eq!(dev.read(0x008, 4), 1); // net = 1
+}
+
+#[test]
+fn test_multiqueue_blk_still_one_queue() {
+    let (dev, _) = make_test_device();
+    dev.write(0x030, 4, 0);
+    assert_ne!(dev.read(0x034, 4), 0);
+    dev.write(0x030, 4, 1);
+    assert_eq!(dev.read(0x034, 4), 0); // only 1 queue
 }

@@ -1,7 +1,10 @@
 // VirtIO network device with TAP and pipe backends.
 
 use std::os::unix::io::RawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
+use crate::mmio::VirtioMmioState;
 use crate::queue::{VirtQueue, VRING_DESC_F_WRITE};
 use crate::VirtioDevice;
 
@@ -23,7 +26,7 @@ pub const DEFAULT_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 // ── Backend trait ──────────────────────────────────────
 
 /// Pluggable network I/O backend.
-pub trait NetBackend: Send {
+pub trait NetBackend: Send + Sync {
     fn fd(&self) -> RawFd;
     fn read_packet(&self, buf: &mut [u8]) -> std::io::Result<usize>;
     fn write_packet(&self, buf: &[u8]) -> std::io::Result<usize>;
@@ -232,14 +235,16 @@ pub fn parse_mac(s: &str) -> Result<[u8; 6], String> {
 
 /// VirtIO network device.
 pub struct VirtioNet {
-    pub backend: Box<dyn NetBackend>,
+    pub backend: Arc<dyn NetBackend>,
     pub mac: [u8; 6],
     pub features: u64,
     pub acked_features: u64,
+    stop_flag: Arc<AtomicBool>,
+    rx_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl VirtioNet {
-    pub fn new(backend: Box<dyn NetBackend>, mac: [u8; 6]) -> Self {
+    pub fn new(backend: Arc<dyn NetBackend>, mac: [u8; 6]) -> Self {
         Self {
             backend,
             mac,
@@ -248,10 +253,12 @@ impl VirtioNet {
                 | VIRTIO_NET_F_STATUS
                 | VIRTIO_NET_F_MRG_RXBUF,
             acked_features: 0,
+            stop_flag: Arc::new(AtomicBool::new(false)),
+            rx_handle: None,
         }
     }
 
-    pub fn new_default(backend: Box<dyn NetBackend>) -> Self {
+    pub fn new_default(backend: Arc<dyn NetBackend>) -> Self {
         Self::new(backend, DEFAULT_MAC)
     }
 
@@ -297,7 +304,18 @@ impl VirtioDevice for VirtioNet {
     }
 
     fn reset(&mut self) {
+        // Stop any running RX worker.
+        let was_running = self.rx_handle.is_some();
+        self.stop_rx_worker();
+
         self.acked_features = 0;
+
+        // Restart the RX worker if it was running.
+        // The caller must call start_rx_worker() again
+        // with the mmio_state to re-attach.
+        if was_running {
+            self.stop_flag = Arc::new(AtomicBool::new(false));
+        }
     }
 
     /// Process a virtqueue notification.
@@ -410,6 +428,96 @@ impl VirtioNet {
     }
 }
 
+// ── RX worker lifecycle ──────────────────────────────
+
+impl VirtioNet {
+    /// Spawn the RX worker thread that polls the backend
+    /// fd and injects received packets into the RX queue.
+    pub fn start_rx_worker(&mut self, mmio_state: Arc<Mutex<VirtioMmioState>>) {
+        // Stop any previous worker first.
+        self.stop_rx_worker();
+
+        self.stop_flag.store(false, Ordering::SeqCst);
+        let stop = Arc::clone(&self.stop_flag);
+        let backend = Arc::clone(&self.backend);
+
+        let handle = std::thread::Builder::new()
+            .name("virtio-net-rx".into())
+            .spawn(move || {
+                rx_worker_loop(&stop, &*backend, &mmio_state);
+            })
+            .expect("failed to spawn virtio-net-rx thread");
+
+        self.rx_handle = Some(handle);
+    }
+
+    /// Signal the RX worker to stop and join it.
+    fn stop_rx_worker(&mut self) {
+        self.stop_flag.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.rx_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// RX worker loop: poll backend fd, read packets, and
+/// inject into the RX virtqueue via the MMIO state.
+fn rx_worker_loop(
+    stop: &AtomicBool,
+    backend: &dyn NetBackend,
+    mmio_state: &Arc<Mutex<VirtioMmioState>>,
+) {
+    let mut buf = vec![0u8; 65535];
+
+    while !stop.load(Ordering::SeqCst) {
+        // Poll the backend fd with a 100ms timeout so
+        // we can check the stop flag frequently.
+        let mut pfd = libc::pollfd {
+            fd: backend.fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: pfd is a valid pollfd on the stack;
+        // nfds=1, timeout=100ms.
+        let ret = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, 100) };
+        if ret <= 0 {
+            continue; // timeout or error — retry
+        }
+        if pfd.revents & libc::POLLIN == 0 {
+            continue;
+        }
+
+        // Read the packet while NOT holding the lock.
+        let n = match backend.read_packet(&mut buf) {
+            Ok(0) | Err(_) => continue,
+            Ok(n) => n,
+        };
+        let packet = &buf[..n];
+
+        // Lock briefly to inject the packet.
+        let mut state = mmio_state.lock().unwrap();
+        let (ram, ram_base, ram_size) = state.ram_info();
+        let queue = match state.queue_mut(0) {
+            Some(q) if q.ready && q.num > 0 => q,
+            _ => continue,
+        };
+        let hdr_size = VIRTIO_NET_HDR_SIZE_BASE;
+        let total_len = hdr_size + packet.len();
+        let used = unsafe {
+            fill_rx_queue_raw(
+                hdr_size, queue, ram, ram_base, ram_size, packet, total_len,
+            )
+        };
+        state.inject_rx(0, used);
+    }
+}
+
+impl Drop for VirtioNet {
+    fn drop(&mut self) {
+        self.stop_rx_worker();
+    }
+}
+
 // ── RX path (host-initiated) ──────────────────────────
 
 /// Fill the RX virtqueue with a received packet.
@@ -431,7 +539,28 @@ pub unsafe fn fill_rx_queue(
 ) -> u32 {
     let hdr_size = net.hdr_size();
     let total_len = hdr_size + packet.len();
+    unsafe {
+        fill_rx_queue_raw(
+            hdr_size, queue, ram, ram_base, ram_size, packet, total_len,
+        )
+    }
+}
 
+/// Inner RX fill logic, parameterised by header size so
+/// it can be called without a `&VirtioNet` reference.
+///
+/// # Safety
+/// Caller must ensure `ram` is valid for
+/// [`ram_base`, `ram_base + ram_size`).
+unsafe fn fill_rx_queue_raw(
+    hdr_size: usize,
+    queue: &mut VirtQueue,
+    ram: *mut u8,
+    ram_base: u64,
+    ram_size: u64,
+    packet: &[u8],
+    total_len: usize,
+) -> u32 {
     let avail_idx = unsafe { queue.read_avail_idx(ram, ram_base, ram_size) };
     if queue.last_avail_idx == avail_idx {
         return 0; // no available descriptors

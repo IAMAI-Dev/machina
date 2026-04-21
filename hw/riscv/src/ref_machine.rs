@@ -46,6 +46,7 @@ pub enum RefMemMap {
     Uart0,
     FwCfg,
     Virtio,
+    VirtioNet,
     Dram,
     Count,
 }
@@ -84,6 +85,10 @@ pub const REF_MEMMAP: [MemMapEntry; RefMemMap::Count as usize] = {
         base: 0x1000_1000,
         size: 0x0000_1000,
     };
+    m[RefMemMap::VirtioNet as usize] = MemMapEntry {
+        base: 0x1000_2000,
+        size: 0x0000_1000,
+    };
     m[RefMemMap::Dram as usize] = MemMapEntry {
         base: 0x8000_0000,
         size: 0,
@@ -100,12 +105,14 @@ pub struct RefIrqMap {
     pub uart0: u32,
     pub rtc: u32,
     pub virtio_base: u32,
+    pub virtio_net: u32,
 }
 
 pub const REF_IRQMAP: RefIrqMap = RefIrqMap {
     uart0: 10,
     rtc: 11,
     virtio_base: 1,
+    virtio_net: 12,
 };
 
 pub const PLIC_NUM_SOURCES: u32 = 96;
@@ -187,6 +194,7 @@ pub struct RefMachine {
     uart: Option<Arc<Uart16550>>,
     uart_chardev: Option<Arc<Mutex<ChardevObject>>>,
     virtio_mmio: Option<VirtioMmio>,
+    virtio_mmio_net: Option<VirtioMmio>,
     sifive_test: Option<Arc<SifiveTest>>,
     fdt_blob: Option<Vec<u8>>,
     // Per-hart RiscvCpu instances. None after take_cpu().
@@ -225,6 +233,7 @@ impl RefMachine {
             uart: None,
             uart_chardev: None,
             virtio_mmio: None,
+            virtio_mmio_net: None,
             sifive_test: None,
             fdt_blob: None,
             cpus: Arc::new(Mutex::new(Vec::new())),
@@ -319,6 +328,9 @@ impl RefMachine {
         if let Some(virtio_mmio) = &self.virtio_mmio {
             infos.push(virtio_mmio.object_info());
         }
+        if let Some(ref net) = self.virtio_mmio_net {
+            infos.push(net.object_info());
+        }
         infos
     }
 
@@ -350,6 +362,11 @@ impl RefMachine {
         if let Some(virtio_mmio) = &self.virtio_mmio {
             if Self::object_matches(object_ref, &virtio_mmio.object_info()) {
                 return Some(f(virtio_mmio));
+            }
+        }
+        if let Some(ref net) = self.virtio_mmio_net {
+            if Self::object_matches(object_ref, &net.object_info()) {
+                return Some(f(net));
             }
         }
         None
@@ -621,6 +638,24 @@ impl RefMachine {
             fdt.end_node();
         }
 
+        // /soc/virtio_mmio@10002000 (if netdev configured)
+        let net_mapping = self
+            .sysbus()
+            .mappings()
+            .iter()
+            .find(|mapping| mapping.owner == "virtio-mmio1");
+        if let Some(mapping) = net_mapping {
+            fdt.begin_node(&format!("virtio_mmio@{:x}", mapping.base.0));
+            fdt.property_string("compatible", "virtio,mmio");
+            fdt.property_u32_list(
+                "reg",
+                &self.sysbus_reg_cells("virtio-mmio1"),
+            );
+            fdt.property_u32("interrupts", REF_IRQMAP.virtio_net);
+            fdt.property_u32("interrupt-parent", plic_phandle);
+            fdt.end_node();
+        }
+
         fdt.end_node(); // /soc
 
         // /chosen
@@ -794,6 +829,41 @@ impl Machine for RefMachine {
             self.virtio_mmio = Some(virtio_mmio);
         }
 
+        // VirtIO net device (if -netdev configured).
+        if let Some(ref netdev) = opts.netdev {
+            use machina_hw_virtio::net::{
+                parse_mac, TapBackend, VirtioNet, DEFAULT_MAC,
+            };
+            let tap = TapBackend::new(&netdev.ifname)?;
+            let mac = if let Some(ref m) = netdev.mac {
+                parse_mac(m).map_err(|e| format!("bad MAC: {}", e))?
+            } else {
+                DEFAULT_MAC
+            };
+            let net = VirtioNet::new(Arc::new(tap), mac);
+            let plic_sink =
+                Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
+            let net_irq = IrqLine::new(
+                plic_sink as Arc<dyn IrqSink>,
+                REF_IRQMAP.virtio_net,
+            );
+            let ram_ptr = self.ram_block.as_ref().unwrap().as_ptr();
+            let net_mm = &REF_MEMMAP[RefMemMap::VirtioNet as usize];
+            let mut virtio_mmio_net = VirtioMmio::new_named(
+                "virtio-mmio1",
+                Box::new(net),
+                net_irq,
+                ram_ptr,
+                RAM_BASE,
+                opts.ram_size,
+            );
+            virtio_mmio_net.attach_to_bus(&mut sysbus)?;
+            let net_region =
+                virtio_mmio_net.make_mmio_region("virtio-mmio1", net_mm.size);
+            virtio_mmio_net.register_mmio(net_region, GPA::new(net_mm.base))?;
+            self.virtio_mmio_net = Some(virtio_mmio_net);
+        }
+
         // UART IRQ source -> PLIC.
         let plic_as_sink =
             Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
@@ -868,6 +938,9 @@ impl Machine for RefMachine {
             if let Some(virtio_mmio) = self.virtio_mmio.as_mut() {
                 virtio_mmio.realize_onto(&mut sysbus, address_space)?;
             }
+            if let Some(ref mut net) = self.virtio_mmio_net {
+                net.realize_onto(&mut sysbus, address_space)?;
+            }
         }
 
         {
@@ -922,6 +995,9 @@ impl Machine for RefMachine {
         }
         if let Some(virtio_mmio) = &mut self.virtio_mmio {
             virtio_mmio.reset_runtime();
+        }
+        if let Some(ref mut net) = self.virtio_mmio_net {
+            net.reset_runtime();
         }
     }
 
