@@ -575,7 +575,13 @@ fn main() {
     // Find HTIF tohost symbol from kernel ELF.
     let htif_tohost: Option<u64> = cli.kernel.as_ref().and_then(|p| {
         let data = std::fs::read(p).ok()?;
-        machina_hw_core::loader::elf_find_symbol(&data, "tohost")
+        let addr = machina_hw_core::loader::elf_find_symbol(&data, "tohost")?;
+        let bias = if machina_hw_core::loader::elf_is_dyn(&data) {
+            machina_hw_riscv::ref_machine::RAM_BASE
+        } else {
+            0
+        };
+        Some(addr + bias)
     });
 
     eprintln!("machina: riscv64-ref, {} MiB RAM", cli.ram_mib,);
@@ -584,6 +590,14 @@ fn main() {
     }
 
     if cli.difftest {
+        if cli.bios_builtin {
+            eprintln!(
+                "machina: --difftest is incompatible \
+                 with -bios builtin"
+            );
+            machina_hw_core::chardev::restore_terminal();
+            process::exit(1);
+        }
         difftest::run_difftest(&opts, cli.ram_mib);
         return;
     }

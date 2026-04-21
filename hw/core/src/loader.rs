@@ -205,6 +205,16 @@ pub fn load_elf(
     })
 }
 
+/// Check if an ELF-64 binary is ET_DYN (position-independent).
+pub fn elf_is_dyn(data: &[u8]) -> bool {
+    if data.len() < ELF64_EHDR_SIZE {
+        return false;
+    }
+    parse_elf_header(data)
+        .map(|h| h.e_type == ET_DYN)
+        .unwrap_or(false)
+}
+
 /// Find a named symbol in an ELF-64 binary and return its
 /// value (address).  Returns `None` if the symbol is not
 /// found or the ELF lacks a symbol table.

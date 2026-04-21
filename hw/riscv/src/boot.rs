@@ -278,12 +278,33 @@ pub fn boot_ref_machine(
     };
 
     // Load initrd (if provided) after the kernel.
-    let initrd_range = if let Some(ref ip) = machine.initrd_path {
+    let initrd_range = if let Some(ref ip) =
+        machine.initrd_path
+    {
         let data = std::fs::read(ip)?;
-        let start = RAM_BASE + KERNEL_OFFSET + 0x200_0000;
+        let start =
+            RAM_BASE + KERNEL_OFFSET + 0x200_0000;
         let end = start + data.len() as u64;
+        let fdt_reserve = 128 * 1024;
+        let ram_end = RAM_BASE + machine.ram_size();
+        let usable_end =
+            ram_end.saturating_sub(fdt_reserve);
+        if end > usable_end {
+            return Err(format!(
+                "initrd ({} bytes) exceeds usable \
+                 RAM (end {:#x} > {:#x})",
+                data.len(),
+                end,
+                usable_end
+            )
+            .into());
+        }
         let as_ = machine.address_space();
-        loader::load_binary(&data, GPA::new(start), as_)?;
+        loader::load_binary(
+            &data,
+            GPA::new(start),
+            as_,
+        )?;
         Some((start, end))
     } else {
         None
