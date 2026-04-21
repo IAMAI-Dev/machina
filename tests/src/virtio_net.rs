@@ -257,3 +257,66 @@ fn test_net_reset_does_not_deadlock() {
     );
     drop(mmio);
 }
+
+// ── AC-3: deterministic lifecycle ────────────────────
+
+#[test]
+fn test_net_stop_within_200ms() {
+    let (mmio, _) = make_net_mmio();
+    let start = std::time::Instant::now();
+    drop(mmio);
+    assert!(start.elapsed() < std::time::Duration::from_millis(200),);
+}
+
+#[test]
+fn test_net_reset_contention_via_shared_state() {
+    let pipe = PipeBackend::new().unwrap();
+    let backend = Arc::new(pipe);
+    let nb: Arc<dyn machina_hw_virtio::net::NetBackend> =
+        Arc::clone(&backend) as _;
+    let net = VirtioNet::new_default(nb);
+    let sink = Arc::new(DummySink {
+        level: AtomicBool::new(false),
+    });
+    let irq = IrqLine::new(sink.clone() as Arc<dyn IrqSink>, 1);
+    let mmio = VirtioMmio::new(
+        Box::new(net),
+        irq,
+        std::ptr::null_mut(),
+        0x8000_0000,
+        128 * 1024 * 1024,
+    );
+
+    // Hold the MMIO lock to force worker contention.
+    let ss = mmio.shared_state();
+    let _guard = ss.lock().unwrap();
+
+    // Inject packet while lock is held — worker will
+    // try_lock and skip.
+    backend.inject_packet(b"pkt1").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // Release lock, then reset from the transport.
+    drop(_guard);
+    let start = std::time::Instant::now();
+    mmio.write(0x070, 4, 0); // reset
+    assert!(
+        start.elapsed() < std::time::Duration::from_millis(200),
+        "reset contention deadlocked"
+    );
+
+    drop(mmio);
+}
+
+// ── AC-4: distinct IRQ assertion ─────────────────────
+
+#[test]
+fn test_net_irq_distinct_from_blk() {
+    use machina_hw_riscv::ref_machine::REF_IRQMAP;
+
+    assert_ne!(
+        REF_IRQMAP.virtio_net, REF_IRQMAP.virtio_base,
+        "net IRQ must differ from block IRQ"
+    );
+    assert_eq!(REF_IRQMAP.virtio_net, 12);
+}

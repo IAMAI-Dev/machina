@@ -267,11 +267,33 @@ impl RefMachine {
         net: machina_hw_virtio::net::VirtioNet,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let plic = self.plic.as_ref().unwrap();
+        let ram_ptr = self.ram_block.as_ref().unwrap().as_ptr();
+        let ram_size = self.ram_size();
+        let sysbus = self.sysbus.as_mut().unwrap();
+        let as_ = self.address_space.as_mut().unwrap();
+        self.virtio_mmio_net = Some(Self::attach_net_device(
+            net,
+            plic,
+            ram_ptr,
+            ram_size,
+            sysbus,
+            Some(as_),
+        )?);
+        self.fdt_blob = Some(self.generate_fdt());
+        Ok(())
+    }
+
+    fn attach_net_device(
+        net: machina_hw_virtio::net::VirtioNet,
+        plic: &Arc<Plic>,
+        ram_ptr: *mut u8,
+        ram_size: u64,
+        sysbus: &mut SysBus,
+        as_opt: Option<&mut AddressSpace>,
+    ) -> Result<VirtioMmio, Box<dyn std::error::Error>> {
         let plic_sink = Arc::new(PlicIrqSink(Arc::clone(plic)));
         let net_irq =
             IrqLine::new(plic_sink as Arc<dyn IrqSink>, REF_IRQMAP.virtio_net);
-        let ram_ptr = self.ram_block.as_ref().unwrap().as_ptr();
-        let ram_size = self.ram_size();
         let net_mm = &REF_MEMMAP[RefMemMap::VirtioNet as usize];
         let mut mmio = VirtioMmio::new_named(
             "virtio-mmio1",
@@ -281,15 +303,13 @@ impl RefMachine {
             RAM_BASE,
             ram_size,
         );
-        let sysbus = self.sysbus.as_mut().unwrap();
         mmio.attach_to_bus(sysbus)?;
         let region = mmio.make_mmio_region("virtio-mmio1", net_mm.size);
         mmio.register_mmio(region, GPA::new(net_mm.base))?;
-        let as_ = self.address_space.as_mut().unwrap();
-        mmio.realize_onto(sysbus, as_)?;
-        self.virtio_mmio_net = Some(mmio);
-        self.fdt_blob = Some(self.generate_fdt());
-        Ok(())
+        if let Some(as_) = as_opt {
+            mmio.realize_onto(sysbus, as_)?;
+        }
+        Ok(mmio)
     }
 
     pub fn lookup_object_by_path(&self, path: &str) -> Option<MObjectInfo> {
@@ -873,27 +893,16 @@ impl Machine for RefMachine {
                 DEFAULT_MAC
             };
             let net = VirtioNet::new(Arc::new(tap), mac);
-            let plic_sink =
-                Arc::new(PlicIrqSink(Arc::clone(self.plic.as_ref().unwrap())));
-            let net_irq = IrqLine::new(
-                plic_sink as Arc<dyn IrqSink>,
-                REF_IRQMAP.virtio_net,
-            );
+            let plic = self.plic.as_ref().unwrap();
             let ram_ptr = self.ram_block.as_ref().unwrap().as_ptr();
-            let net_mm = &REF_MEMMAP[RefMemMap::VirtioNet as usize];
-            let mut virtio_mmio_net = VirtioMmio::new_named(
-                "virtio-mmio1",
-                Box::new(net),
-                net_irq,
+            self.virtio_mmio_net = Some(Self::attach_net_device(
+                net,
+                plic,
                 ram_ptr,
-                RAM_BASE,
                 opts.ram_size,
-            );
-            virtio_mmio_net.attach_to_bus(&mut sysbus)?;
-            let net_region =
-                virtio_mmio_net.make_mmio_region("virtio-mmio1", net_mm.size);
-            virtio_mmio_net.register_mmio(net_region, GPA::new(net_mm.base))?;
-            self.virtio_mmio_net = Some(virtio_mmio_net);
+                &mut sysbus,
+                None,
+            )?);
         }
 
         // UART IRQ source -> PLIC.

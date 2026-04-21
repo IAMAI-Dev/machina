@@ -658,4 +658,11 @@ fn test_ref_machine_net_fdt_node() {
         fdt.windows(node.len()).any(|w| w == node),
         "FDT should contain virtio_mmio@10002000"
     );
+
+    // Verify IRQ 12 is present in the FDT (u32 BE).
+    let irq12_be = 12u32.to_be_bytes();
+    assert!(
+        fdt.windows(4).any(|w| w == irq12_be),
+        "FDT net node should contain IRQ 12"
+    );
 }
