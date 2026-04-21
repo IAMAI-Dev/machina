@@ -382,6 +382,17 @@ pub fn boot_builtin(
         let data = std::fs::read(ipath)?;
         let initrd_start = RAM_BASE + 0x200_0000;
         let initrd_end = initrd_start + data.len() as u64;
+        let ram_end = RAM_BASE + machine.ram_size();
+        if initrd_end > ram_end {
+            return Err(format!(
+                "initrd ({} bytes) exceeds RAM \
+                 (end {:#x} > {:#x})",
+                data.len(),
+                initrd_end,
+                ram_end
+            )
+            .into());
+        }
         let as_ = machine.address_space();
         loader::load_binary(&data, GPA::new(initrd_start), as_)
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;

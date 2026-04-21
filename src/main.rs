@@ -434,10 +434,9 @@ fn run_machine_cycle(
         let sbi_reason = Arc::clone(&shutdown_reason);
         let shutdown_cb: Arc<dyn Fn(u32) + Send + Sync> =
             Arc::new(move |reset_type| {
-                let reason = if reset_type == 1 {
-                    ShutdownReason::Reset
-                } else {
-                    ShutdownReason::Pass
+                let reason = match reset_type {
+                    1 | 2 => ShutdownReason::Reset,
+                    _ => ShutdownReason::Pass,
                 };
                 *sbi_reason.lock().unwrap() = Some(reason);
                 sbi_stop.store(false, Ordering::SeqCst);

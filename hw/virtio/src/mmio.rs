@@ -120,6 +120,10 @@ impl VirtioMmioState {
         self.driver_features
     }
 
+    pub fn is_driver_ok(&self) -> bool {
+        self.status & 0x4 != 0
+    }
+
     fn process_notify(&mut self) {
         let sel = self.queue_sel as usize;
         if sel >= self.queues.len() {

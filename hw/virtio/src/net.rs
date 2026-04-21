@@ -501,6 +501,9 @@ fn rx_worker_loop(
             Ok(s) => s,
             Err(_) => continue,
         };
+        if !state.is_driver_ok() {
+            continue;
+        }
         let (ram, ram_base, ram_size) = state.ram_info();
         let feats = state.negotiated_features();
         let hdr_size = if feats & VIRTIO_NET_F_MRG_RXBUF != 0 {
